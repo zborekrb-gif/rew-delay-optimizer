@@ -347,6 +347,14 @@ def _audit_input_for_acoustic_design(mdat_path: Path, roles: Dict[str, str]) -> 
     RAW + XOVER_OFF + REL120 + DELAY0 oraz nie wskazują DIRAC_ON/POST_DIRAC.
     To nadal nie potwierdza faktycznego stanu urządzenia — potwierdza wyłącznie nazwy.
     """
+    from rew_source_binding import raw_contract
+    explicit = raw_contract(mdat_path)
+    if explicit is not None:
+        if is_rew_api_snapshot(mdat_path):
+            ok, problems = verify_snapshot_response_integrity(read_snapshot(mdat_path))
+            if not ok:
+                return ("API_DANE_NIEZWERYFIKOWANE", "EKSPORT ZABLOKOWANY", "; ".join(problems))
+        return explicit
     names = " ".join([str(mdat_path.name)] + [str(v) for v in roles.values() if v])
     low = names.lower()
     missing_roles = [r for r in ["L main", "R main", "L sub", "R sub"] if not roles.get(r)]
@@ -689,6 +697,7 @@ def design_acoustic_crossovers(
     effective_xo_min_hz: float = 70.0,
     effective_xo_max_hz: float = 105.0,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    prepare_import_files: bool = True,
 ) -> List[AcousticCandidate]:
     out_dir.mkdir(parents=True, exist_ok=True)
     write_metric_registry(out_dir)
@@ -735,7 +744,9 @@ def design_acoustic_crossovers(
     applied_r_db = float(gain_bridge_target_delta_db)
 
     if gain_bridge_path is not None:
-        bridge_audit = analyze_gain_bridge(Path(mdat_path), Path(gain_bridge_path), expected_gain_db=6.0)
+        if listening_sub_trim_db is None:
+            raise InputIntegrityError("Brak poziomu odsłuchowego.")
+        bridge_audit = analyze_gain_bridge(Path(mdat_path), Path(gain_bridge_path), expected_gain_db=float(listening_sub_trim_db) - float(raw_sub_trim_db))
         write_gain_bridge_report(bridge_audit, out_dir)
         if bridge_audit.status != "VERIFIED":
             raise ValueError("Gain bridge: " + bridge_audit.reason)
@@ -1041,7 +1052,8 @@ def design_acoustic_crossovers(
     if not safe_selected:
         write_quarantine(out_dir, selected, safety_results, mode="STANDARD_CROSSOVER_NO_SAFE_CANDIDATE")
         raise NoSafeCandidateError("Analiza zakończona: brak kandydata przechodzącego Candidate Safety Gate.")
-    write_biquad_exports(out_dir, safe_selected, fs, shd_anchor_main=shd_anchor_main)
+    if prepare_import_files:
+        write_biquad_exports(out_dir, safe_selected, fs, shd_anchor_main=shd_anchor_main)
     return selected
 
 

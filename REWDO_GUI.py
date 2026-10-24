@@ -1,1538 +1,787 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""REWDO v20.31 GUI — Safety Hotfix.
-
-Prosty graficzny panel startowy dla trybów, które wcześniej były uruchamiane
-plikami .bat. GUI nie zmienia matematyki analizy — buduje te same komendy CLI,
-pozwala wybrać plik .mdat i folder wyników, uruchamia proces w tle oraz pokazuje
-log w oknie.
-
-Uruchamianie:
-- Windows: dwuklik w REWDO_GUI.pyw
-- Alternatywnie: python REWDO_GUI.py
-"""
+"""REWDO 20.32. One application, three task-oriented workspaces."""
 from __future__ import annotations
-
+import copy
+import json
 import os
 import queue
 import subprocess
-import sys
-import threading
-import traceback
 import time
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Optional, Sequence
-
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from pathlib import Path
+from tkinter import ttk, filedialog, messagebox
+from rew_project import (STAGES, STEPS, ROLES, active_config, changed, fingerprint, load_project,
+    new_project, number, put_config, put_measurement_preset, relocate, result_is_current, save_project, uid, user_dir, utc_now)
+from rew_process import ProcessJob
 
-from rew_api_client import DEFAULT_REW_API_URL, is_rew_api_snapshot
-from rew_api_gui import REWApiDialog
-from rew_reference_registry import find_reference_conflicts, load_reference_record
+APP_VERSION = "20.32"
 
 
-def _subprocess_creationflags() -> int:
-    """Ukryj okno konsoli dla procesów potomnych w Windows.
+def __getattr__(name):
+    # Legacy developer API remains testable, but is not the normal application.
+    if name in {"MODES", "build_command", "_repair_log_text", "_decode_process_line"}:
+        import rew_legacy_launcher
+        return getattr(rew_legacy_launcher, name)
+    raise AttributeError(name)
 
-    Ważne dla buildów PyInstaller bez konsoli: GUI ma pozostać jedynym oknem,
-    także gdy uruchamia wewnętrzny tryb CLI przez ten sam plik EXE.
-    """
-    if sys.platform.startswith("win"):
-        return int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    return 0
 
-
-
-def _text_score_for_encoding(s: str) -> int:
-    """Heuristic score: prefer real Polish letters, penalize mojibake/replacement chars."""
-    polish = "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ"
-    bad = "�ÃÄÅĹÂ¤€šœžŸµ"
-    return sum(4 for ch in s if ch in polish) - sum(5 for ch in s if ch == "�") - sum(2 for ch in s if ch in bad)
-
-
-def _repair_log_text(text: str) -> str:
-    """Repair the most common UTF-8/Windows-1250 mojibake before showing log.
-
-    In a windowed PyInstaller EXE the child process may write either UTF-8 or
-    the Windows ANSI code page. The GUI log should show Polish characters in
-    both cases.
-    """
-    if not isinstance(text, str):
-        text = str(text)
-
-    candidates = [text]
-    for enc in ("cp1250", "cp1252", "latin1"):
-        try:
-            candidates.append(text.encode(enc).decode("utf-8"))
-        except Exception:
-            pass
-
-    best = max(candidates, key=_text_score_for_encoding)
-
-    # Extra cleanup for double-decoded Windows/UTF-8 Polish mojibake seen in
-    # some console/pipe combinations.
-    replacements = {
-        "BÅÄ„D": "BŁĄD",
-        "BÅÄ…d": "Błąd",
-        "ZAKOÅƒCZONO": "ZAKOŃCZONO",
-        "zaÅ¼Ã³ÅÄ‡": "zażółć",
-        "gÄ™Å›lÄ…": "gęślą",
-        "jaÅºÅ„": "jaźń",
-        "Å": "Ł", "Å‚": "ł",
-        "Ä…": "ą", "Ä‡": "ć", "Ä™": "ę", "Å„": "ń",
-        "Ã³": "ó", "Å›": "ś", "Åº": "ź", "Å¼": "ż",
-        "Ä„": "Ą", "Ä†": "Ć", "Ä˜": "Ę", "Åƒ": "Ń",
-        "Ã“": "Ó", "Åš": "Ś", "Å¹": "Ź", "Å»": "Ż",
-        "Ĺ": "Ł", "Ĺ‚": "ł", "Ĺ„": "ń", "Ĺ›": "ś",
-        "Ĺş": "ź", "Ĺź": "ż", "Ăł": "ó",
-        "Ĺ\x81": "Ł", "Ĺ\x82": "ł", "Ĺ\x84": "ń",
-        "Ĺ\x9b": "ś", "Ĺ\xba": "ź", "Ĺ\xbc": "ż",
-    }
-    for bad, good in replacements.items():
-        best = best.replace(bad, good)
-
-    return best.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _decode_process_output(data: bytes | str) -> str:
-    """Decode one stdout/stderr chunk from the worker process safely."""
-    if isinstance(data, str):
-        return _repair_log_text(data)
-
-    candidates: list[str] = []
-    for enc in ("utf-8", "cp1250", "mbcs", "cp1252"):
-        try:
-            candidates.append(data.decode(enc, errors="strict"))
-        except Exception:
-            pass
-    if not candidates:
-        candidates.append(data.decode("utf-8", errors="replace"))
-
-    repaired = [_repair_log_text(c) for c in candidates]
-    return max(repaired, key=_text_score_for_encoding)
-
-
-def _default_log_font() -> tuple[str, int]:
-    """Use a Windows-friendly font with complete Polish glyph coverage."""
-    if sys.platform.startswith("win"):
-        return ("Consolas", 9)
-    return ("TkFixedFont", 9)
-
-
-def _is_frozen() -> bool:
-    return bool(getattr(sys, "frozen", False))
-
-
-def _app_dir() -> Path:
-    """Folder aplikacji dla trybu źródłowego i EXE ONEDIR.
-
-    W źródłach: folder z plikami .py.
-    W EXE ONEDIR: folder obok REWDO_GUI.exe. Tam trzymamy USER_*.yaml
-    i tam domyślnie trafiają katalogi wyników.
-    """
-    if _is_frozen():
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent
-
-
-APP_DIR = _app_dir()
-
-
-def _bundled_file(name: str) -> Path:
-    """Find a user/config file in source, ONEDIR root, or PyInstaller _internal."""
-    candidates = [
-        APP_DIR / name,
-        APP_DIR / "_internal" / name,
-    ]
-    try:
-        meipass = Path(getattr(sys, "_MEIPASS", ""))
-        if str(meipass):
-            candidates.append(meipass / name)
-            candidates.append(meipass / "_internal" / name)
-    except Exception:
-        pass
-    for c in candidates:
-        try:
-            if c.exists():
-                return c
-        except Exception:
-            pass
-    return APP_DIR / name
-
-
-def _default_reference_90() -> Path:
-    """Return the bundled/default 90 BW48 reference without creating estimates.
-
-    v20.07 CLEAN: the GUI must not silently generate an estimated
-    USER_REFERENCE_90BW48.yaml. If the file is missing, ranking modes and
-    POST-DIRAC stop with a clear message, and the user can create a real
-    reference via mode 4 — Verify User Slot SHD.
-    """
-    ref = _bundled_file("USER_REFERENCE_90BW48.yaml")
-    if ref.exists():
-        return ref
-    return APP_DIR / "USER_REFERENCE_90BW48.yaml"
-
-
-def _ensure_default_reference_90() -> Path:
-    """Backward-compatible alias; no file is created in v20.07 CLEAN."""
-    return _default_reference_90()
-
-
-
-def _resolve_user_reference_path(path_text: str | Path | None) -> Path:
-    """Return selected reference path or the default 90 BW48 reference."""
-    raw = str(path_text or "").strip()
-    if not raw:
-        return _default_reference_90()
-    try:
-        return Path(raw).expanduser().resolve()
-    except Exception:
-        return Path(raw)
-
-
-def _read_top_level_yaml_like(path: Path) -> Dict[str, str]:
-    """Tiny, dependency-free reader for the simple USER_REFERENCE_*.yaml files.
-
-    It is only used by the GUI to prevent selecting USER_REFERENCE_102BW48.yaml
-    in the field that must contain the real 90 BW48 SHD reference.
-    """
-    data: Dict[str, str] = {}
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        return data
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or line.startswith("-"):
-            continue
-        if ":" not in line:
-            continue
-        key, val = line.split(":", 1)
-        key = key.strip()
-        val = val.strip().split(" #", 1)[0].strip().strip('"').strip("'")
-        if key and key not in data:
-            data[key] = val
-    return data
-
-
-def _to_float_or_none(value: object) -> Optional[float]:
-    try:
-        raw = str(value).strip().lower().replace(",", ".")
-        if raw in {"", "none", "null", "nan", "—", "-"}:
-            return None
-        val = float(raw)
-        if val != val:
-            return None
-        return val
-    except Exception:
-        return None
-
-
-def _validate_real_reference_90(path: Path) -> tuple[bool, str]:
-    """Validate the file selected in GUI field 'Plik referencji SHD 90'.
-
-    v20.07: this field is intentionally strict. It must not point to
-    USER_REFERENCE_102BW48.yaml, because that file is only a listening candidate
-    profile and has null delays by design.
-    """
-    if not path.exists():
-        return False, f"Plik nie istnieje: {path}"
-    data = _read_top_level_yaml_like(path)
-    if not data:
-        return False, f"Nie mogę odczytać prostego YAML: {path}"
-    missing = []
-    for key in ("l_main_ms", "r_main_ms", "l_sub_ms", "r_sub_ms"):
-        if _to_float_or_none(data.get(key)) is None:
-            missing.append(key)
-    if missing:
-        extra = ""
-        if "102" in path.name or str(data.get("role", "")).strip():
-            extra = "\n\nWygląda na to, że wybrano profil kandydata 102, a nie realną referencję 90. USER_REFERENCE_102BW48.yaml ma delaye null i nie może być użyty jako 'Plik referencji SHD 90'."
-        return False, "Brak realnych delayów SHD w polach: " + ", ".join(missing) + extra
-    xo = _to_float_or_none(data.get("crossover_hz"))
-    filt = str(data.get("filter", "")).strip().upper()
-    if xo is not None and abs(xo - 90.0) > 0.51:
-        return False, f"To pole wymaga realnej referencji 90 BW48, a plik ma crossover_hz={xo:g}."
-    if filt and "BW48" not in filt.replace(" ", ""):
-        return False, f"To pole wymaga referencji 90 BW48, a plik ma filter={filt}."
-    try:
-        record = load_reference_record(path)
-    except ValueError as exc:
-        return False, str(exc)
-    companion = path.with_name("USER_REFERENCE_SLOT4MAX_90BW48.yaml")
-    if companion.exists() and companion.resolve() != path.resolve():
-        conflicts = find_reference_conflicts([path, companion])
-        if conflicts:
-            return False, conflicts[0].describe() + ". Nie wybieram delayu po cichu; rozstrzygnij 17,9/19,1 ms pomiarem."
-    if not record.anchor_allowed:
-        return False, (
-            "Referencja nie jest zweryfikowana pomiarem. Wymagane: verified=true, "
-            "verification_status=MEASURED lub USER_CONFIRMED, hash pomiaru i verified_at."
-        )
-    return True, "OK"
-
-
-def _reference_required(mode: "Mode") -> bool:
-    """Modes that read USER_REFERENCE_*.yaml through --user-reference."""
-    return mode.key in {"fast_90", "post_dirac", "polarity", "global", "between", "acoustic_crossover", "slot4max", "acoustic_biquad"}
-
-
-
-@dataclass(frozen=True)
-class Mode:
-    key: str
-    label: str
-    output_dir: str
-    description: str
-    needs_mdat: bool = True
-    needs_bridge: bool = False
-    verify_mode: bool = False
-
-
-MODES: List[Mode] = [
-    Mode(
-        "raw_check",
-        "0 — Kontrola pliku RAW",
-        "raw_measurement_check",
-        "Kontrola bazowego RAW: zakres pasma, role pomiarów, delay0, REL120 i kompletność danych. To pierwszy test jakości wejścia.",
-    ),
-    Mode(
-        "gain_bridge",
-        "0B — Gain Bridge RAW −6 dB → 0 dB",
-        "GAIN_BRIDGE_RESULT",
-        "Sprawdza amplitudowo rzeczywistą zmianę gainu subwooferów osobno dla L i R. Wymaga pełnego RAW oraz pliku bridge z L_SUM_SUB0 i R_SUM_SUB0.",
-        needs_bridge=True,
-    ),
-    Mode(
-        "fast_90",
-        "1 — Szybki wybór kandydatów blisko 90 BW48",
-        "ranking_REFERENCE_NEIGHBORHOOD_90",
-        "Wybiera sloty do wpisania w SHD. RAW nie rozstrzyga finalnego zwycięzcy — wskazuje kandydatów do Diraca i pomiaru POST-DIRAC.",
-    ),
-    Mode(
-        "post_dirac",
-        "2 — Analiza po Diracu: tabela decyzji slotów L+P",
-        "post_dirac_ab",
-        "Najważniejszy tryb decyzyjny po Diracu: tabela pełnych slotów L+P, diagnostyka L/R i odporność L/MLP/P.",
-    ),
-    Mode(
-        "polarity",
-        "3 — Diagnostyka polaryzacji subów",
-        "ranking_POLARITY_DIAGNOSTIC_MUSIC_SAFE",
-        "Sprawdza, czy odwrócenie polaryzacji subów daje sensowny kierunek. Wyniki INV traktuj jako diagnostykę, nie automatyczną decyzję.",
-    ),
-    Mode(
-        "verify_slot",
-        "4 — Zapis realnej referencji SHD 90",
-        "verify_user_slot",
-        "Wpisz cztery delaye z konsoli miniDSP SHD. Narzędzie zapisze realną referencję 90 BW48 do YAML.",
-        needs_mdat=False,
-        verify_mode=True,
-    ),
-    Mode(
-        "global",
-        "5 — Skan globalny / nowe topologie",
-        "ranking_GLOBAL_RAW_DIAGNOSTIC_ONLY",
-        "Skan dalekich topologii delayów. Używaj do szukania nowych kierunków, nie do prostego zastąpienia 90.",
-    ),
-    Mode(
-        "between",
-        "6 — Kompromis 98–102 BW48",
-        "ranking_BETWEEN_90_AND_102",
-        "Szuka kompromisu między teksturą 90 a energią/sceną wyższych XO. 102 pozostaje kandydatem warunkowym.",
-    ),
-    Mode(
-        "filter_generator",
-        "7 — Generator filtrów teoretycznych miniDSP",
-        "filtry_zwrotnicy_minidsp",
-        "Generuje kontrolne warianty HPF/LPF z teorii BW/LR. To tryb pomocniczy, nie projektant akustyczny.",
-        needs_mdat=False,
-    ),
-    Mode(
-        "acoustic_crossover",
-        "8 — Selektor standardowych BW48/LR48 z RAW",
-        "zwrotnica_akustyczna_z_raw",
-        "Wybiera standardowe kaskady BW48/LR48 i sprawdza je w stanie Dirac oraz odsłuchowym. Wymaga zweryfikowanego Gain Bridge.",
-        needs_bridge=True,
-    ),
-    Mode(
-        "slot4max",
-        "8B — Slot 4 Shortlist Validator",
-        "SLOT4_SHORTLIST_VALIDATOR",
-        "Porównuje wyłącznie jawnie policzone warianty REFERENCE, SAFE i SEAM. Wymaga pełnego RAW, Gain Bridge i bezkonfliktowej referencji z dowodem pomiarowym.",
-        needs_bridge=True,
-    ),
-    Mode(
-        "acoustic_biquad",
-        "9 — Projektant biquadów — GainState + Safety Gate",
-        "acoustic_biquad_reference_safe",
-        "Projektuje osobne częstotliwości i Q sekcji oraz sprawdza ten sam filtr w stanie Dirac i odsłuchowym. Gain Bridge jest obowiązkowy do eksportu.",
-        needs_bridge=True,
-    ),
-    Mode(
-        "time_domain",
-        "10 — Analiza czasowa / 90 BW48 Fast",
-        "time_domain_90bw48_fast",
-        "Wyznacza rozrzut z 3 powtórzeń referencji i wydaje jeden werdykt dla kompletnego wariantu L/R/L+R. Ochrona body 100–220 Hz oraz spójny anchor group delay są obowiązkowe. Wymaga migawki REW API z impulsem.",
-    ),
-]
-
-MODE_BY_LABEL: Dict[str, Mode] = {m.label: m for m in MODES}
-
-
-
-def _python_exe() -> str:
-    """Interpreter Python dla trybu źródłowego.
-
-    W skompilowanym EXE GUI nie używa python.exe; uruchamia ten sam
-    REWDO_GUI.exe z parametrem --rewdo-cli.
-    """
-    exe = Path(sys.executable)
-    if exe.name.lower() == "pythonw.exe":
-        candidate = exe.with_name("python.exe")
-        if candidate.exists():
-            return str(candidate)
-    return str(exe)
-
-
-def _cli_exe() -> Path:
-    """Single-EXE helper path.
-
-    In frozen/ONEDIR mode the GUI runs its own
-    executable with:
-        REWDO_GUI.exe --rewdo-cli <subcommand> ...
-    This avoids the previous fragile two-EXE design (REWDO_GUI.exe +
-    REWDO_CLI.exe), where the starter could fail before writing useful logs.
-    """
-    if _is_frozen():
-        return Path(sys.executable).resolve()
-    return Path()
-
-
-def _script_command(script_filename: str, frozen_subcommand: str) -> List[str]:
-    """Command prefix for source mode and frozen ONEDIR mode.
-
-    Source:
-        python -u rew_xxx.py ...
-
-    Frozen ONEDIR:
-        REWDO_GUI.exe --rewdo-cli <subcommand> ...
-
-    This single-EXE design is more reliable on Windows than launching a
-    separate REWDO_CLI.exe helper.
-    """
-    if _is_frozen():
-        return [str(Path(sys.executable).resolve()), "--rewdo-cli", frozen_subcommand]
-    return [_python_exe(), "-u", str(APP_DIR / script_filename)]
-
-
-def _open_path(path: Path) -> None:
-    try:
-        if sys.platform.startswith("win"):
-            os.startfile(str(path))  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(path)])
-        else:
-            subprocess.Popen(["xdg-open", str(path)])
-    except Exception as exc:
-        messagebox.showwarning("Nie udało się otworzyć", f"Nie mogę otworzyć:\n{path}\n\n{exc}")
-
-
-def _append_extra_args(cmd: List[str], extra_text: str) -> List[str]:
-    # Minimalny parser dla zaawansowanych argumentów: pozwala dopisać np.
-    # --workers 2 albo --xo-min 94. Nie obsługuje cudzysłowów z odstępami,
-    # bo standardowy workflow nie wymaga takich wartości.
-    extra = [x.strip() for x in str(extra_text or "").split() if x.strip()]
-    return cmd + extra
-
-
-def build_command(
-    *,
-    mode: Mode,
-    mdat_path: Path,
-    out_dir: Path,
-    reference: str,
-    user_reference_path: Path,
-    workers: int,
-    extra_args: str,
-    verify_values: Dict[str, str],
-    bridge_path: Optional[Path] = None,
-    allpass_enabled: bool = False,
-    cut_only_enabled: bool = True,
-    raw_sub_trim_db: float = -6.0,
-    spatial_mdat_paths: Optional[Sequence[str]] = None,
-    empirical_calibration_enabled: bool = False,
-    delay_refinement_enabled: bool = True,
-) -> List[str]:
-    user_ref_90 = _resolve_user_reference_path(user_reference_path)
-
-    # v20.07: PyInstaller single-EXE + multiprocessing on Windows can hang before
-    # any result file is created. Default GUI runs ranking modes serially. Advanced
-    # users can still override by adding a later "--workers N" in extra CLI args.
-    if _is_frozen() and mode.key in {"fast_90", "polarity", "global", "between", "acoustic_crossover", "acoustic_biquad"} and int(workers) != 1:
-        workers = 1
-
-    if mode.key == "raw_check":
-        cmd = _script_command("rew_raw_measurement_check.py", "raw_check") + ["--mdat", str(mdat_path), "--out", str(out_dir)]
-
-    elif mode.key == "gain_bridge":
-        if bridge_path is None:
-            raise ValueError("Tryb Gain Bridge wymaga drugiego pliku MDAT.")
-        cmd = _script_command("rew_gain_bridge.py", "gain_bridge") + [
-            "--raw", str(mdat_path), "--bridge", str(bridge_path), "--out", str(out_dir),
-        ]
-
-    elif mode.key == "fast_90":
-        cmd = _script_command("rew_crossover_ranking.py", "crossover_ranking") + [
-            "--mdat", str(mdat_path), "--out", str(out_dir),
-            "--profiles", "BW48",
-            "--xo-min", "86", "--xo-max", "96", "--xo-step", "2",
-            "--music-xo-cap", "92", "--caution-xo-cap", "102",
-            "--delay-min", "-13", "--delay-max", "-7",
-            "--shd-limit", "30",
-            "--global-candidate-pool", "90",
-            "--fast-ab",
-            "--reference-neighborhood",
-            "--reference-neighborhood-radius", "2.0",
-            "--reference-xo", "90",
-            "--reference-filter-type", "BW",
-            "--reference-slope", "48",
-            "--workers", str(workers),
-            "--user-reference", str(user_ref_90),
-        ]
-
-    elif mode.key == "post_dirac":
-        cmd = _script_command("rew_post_dirac_ab.py", "post_dirac") + [
-            "--source", str(mdat_path),
-            "--out", str(out_dir),
-            "--reference", reference.strip() or "90_BW48_slot2",
-            "--texture-reference-yaml", str(user_ref_90),
-        ]
-
-    elif mode.key == "polarity":
-        cmd = _script_command("rew_crossover_ranking.py", "crossover_ranking") + [
-            "--mdat", str(mdat_path), "--out", str(out_dir),
-            "--profiles", "BW48,LR48",
-            "--xo-min", "74", "--xo-max", "102", "--xo-step", "2",
-            "--music-xo-cap", "92", "--caution-xo-cap", "102",
-            "--delay-min", "-30", "--delay-max", "30",
-            "--shd-limit", "30",
-            "--refine-top", "5",
-            "--refine-scene-top", "3",
-            "--global-candidate-pool", "420",
-            "--polarity-scan",
-            "--workers", str(workers),
-            "--user-reference", str(user_ref_90),
-        ]
-
-    elif mode.key == "global":
-        cmd = _script_command("rew_crossover_ranking.py", "crossover_ranking") + [
-            "--mdat", str(mdat_path), "--out", str(out_dir),
-            "--profiles", "BW48,LR48",
-            "--xo-min", "74", "--xo-max", "102", "--xo-step", "2",
-            "--music-xo-cap", "92", "--caution-xo-cap", "102",
-            "--delay-min", "-30", "--delay-max", "30",
-            "--shd-limit", "30",
-            "--global-candidate-pool", "90",
-            "--fast-ab",
-            "--reference-neighborhood",
-            "--reference-neighborhood-radius", "2.0",
-            "--reference-xo", "90",
-            "--reference-filter-type", "BW",
-            "--reference-slope", "48",
-            "--workers", str(workers),
-            "--user-reference", str(user_ref_90),
-        ]
-
-    elif mode.key == "between":
-        cmd = _script_command("rew_crossover_ranking.py", "crossover_ranking") + [
-            "--mdat", str(mdat_path), "--out", str(out_dir),
-            "--profiles", "BW48",
-            "--xo-min", "98", "--xo-max", "102", "--xo-step", "2",
-            "--music-xo-cap", "92", "--caution-xo-cap", "102",
-            "--delay-min", "-30", "--delay-max", "30",
-            "--shd-limit", "30",
-            "--global-candidate-pool", "90",
-            "--fast-ab",
-            "--reference-neighborhood",
-            "--reference-neighborhood-radius", "2.0",
-            "--reference-xo", "90",
-            "--reference-filter-type", "BW",
-            "--reference-slope", "48",
-            "--workers", str(workers),
-            "--user-reference", str(user_ref_90),
-        ]
-
-    elif mode.key == "filter_generator":
-        cmd = _script_command("rew_filter_generator.py", "filter_generator") + [
-            "--out", str(out_dir),
-        ]
-
-    elif mode.key == "acoustic_crossover":
-        if bridge_path is None:
-            raise ValueError("Tryb 8 wymaga zweryfikowanego pliku Gain Bridge MDAT.")
-        cmd = _script_command("rew_acoustic_crossover_designer.py", "acoustic_crossover") + [
-            "--mdat", str(mdat_path),
-            "--out", str(out_dir),
-            "--top", "8",
-            "--gain-mode", "suggested",
-            "--user-reference", str(user_ref_90),
-            "--refine-radius", "0.4",
-            "--refine-step", "0.1",
-            "--gain-bridge", str(bridge_path),
-            "--gain-bridge-target-delta-db", "2.0",
-            "--raw-sub-trim-db", "-6.0",
-            "--dirac-sub-trim-db", "-4.0",
-            "--listening-sub-trim-db", "0.0",
-        ]
-
-    elif mode.key == "slot4max":
-        if bridge_path is None:
-            raise ValueError("Slot 4 Shortlist Validator wymaga pliku Gain Bridge MDAT.")
-        cmd = _script_command("rew_slot4max_project.py", "slot4max") + [
-            "--raw", str(mdat_path), "--bridge", str(bridge_path), "--out", str(out_dir),
-            "--reference-yaml", str(user_ref_90),
-        ]
-
-    elif mode.key == "acoustic_biquad":
-        if bridge_path is None:
-            raise ValueError("Tryb 9 wymaga zweryfikowanego pliku Gain Bridge MDAT.")
-        cmd = _script_command("rew_acoustic_biquad_designer.py", "acoustic_biquad") + [
-            "--mdat", str(mdat_path),
-            "--out", str(out_dir),
-            "--search-level", "normal",
-            "--user-reference", str(user_ref_90),
-            "--shd-anchor-main", "30",
-            "--search-repeats", "1",
-            "--gain-bridge", str(bridge_path),
-            "--dirac-sub-trim-db", "-4.0",
-            "--listening-sub-trim-db", "0.0",
-        ]
-        measured_ref = _bundled_file("90_BW48_main30.mdat")
-        if measured_ref.exists():
-            cmd += ["--reference-mdat", str(measured_ref)]
-        empirical_calibration = _bundled_file("USER_EMPIRICAL_CALIBRATION.json")
-        if empirical_calibration.exists():
-            cmd += ["--empirical-calibration", str(empirical_calibration)]
-        if empirical_calibration_enabled:
-            cmd += ["--enable-empirical-calibration"]
-        if not delay_refinement_enabled:
-            cmd += ["--no-delay-refinement"]
-        cmd += ["--all-pass-mode", "compare" if allpass_enabled else "off"]
-        cmd += ["--cut-only-mode", "on" if cut_only_enabled else "off"]
-        cmd += ["--raw-sub-trim-db", f"{float(raw_sub_trim_db):.2f}"]
-        for spatial_path in spatial_mdat_paths or []:
-            if str(spatial_path).strip():
-                cmd += ["--spatial-mdat", str(spatial_path).strip()]
-
-    elif mode.key == "time_domain":
-        cmd = _script_command("rew_time_domain_analyzer.py", "time_domain") + [
-            "--snapshot", str(mdat_path),
-            "--out", str(out_dir),
-            "--reference", reference.strip() or "REF_SLOT2_90BW48_G0",
-        ]
-
-    elif mode.key == "verify_slot":
-        required = ["l_main", "r_main", "l_sub", "r_sub"]
-        missing = [k for k in required if not str(verify_values.get(k, "")).strip()]
-        if missing:
-            raise ValueError("Brakuje wartości delayów: " + ", ".join(missing))
-        out_file = out_dir / "VERIFY_USER_SLOT.md"
-        cmd = _script_command("rew_verify_user_slot.py", "verify_slot") + [
-            "--l-main", verify_values["l_main"],
-            "--r-main", verify_values["r_main"],
-            "--l-sub", verify_values["l_sub"],
-            "--r-sub", verify_values["r_sub"],
-            "--out", str(out_file),
-        ]
-        if verify_values.get("xo"):
-            cmd += ["--xo", verify_values["xo"]]
-        if verify_values.get("filter"):
-            cmd += ["--filter", verify_values["filter"]]
-        if verify_values.get("l_pol"):
-            cmd += ["--l-pol", verify_values["l_pol"]]
-        if verify_values.get("r_pol"):
-            cmd += ["--r-pol", verify_values["r_pol"]]
-        if verify_values.get("ranking_csv"):
-            cmd += ["--ranking-csv", verify_values["ranking_csv"]]
-        if str(verify_values.get("save_ref", "")).lower() in {"1", "true", "yes", "tak", "t"}:
-            cmd += ["--save-user-reference", str(user_ref_90)]
-
+def folder(path):
+    if os.name == "nt":
+        os.startfile(str(Path(path).resolve()))
     else:
-        raise ValueError(f"Nieznany tryb: {mode.key}")
-
-    return _append_extra_args(cmd, extra_args)
+        subprocess.Popen(["xdg-open", str(Path(path).resolve())], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def guess_main_report(mode: Mode, out_dir: Path) -> Optional[Path]:
-    candidates = {
-        "raw_check": ["RAW_MEASUREMENT_CHECK.md"],
-        "gain_bridge": ["GAIN_BRIDGE_CHECK.md"],
-        "fast_90": ["01_CO_TERAZ_ZROBIC_RAW.md", "SLOT_PLAN_DO_SHD.md", "RANKING_CROSSOVEROW_RAW.md"],
-        "post_dirac": ["01_CO_TERAZ_ZROBIC_POST_DIRAC.md", "FINAL_DECISION_REPORT.md", "POST_DIRAC_AB_REPORT.md"],
-        "polarity": ["RANKING_CROSSOVEROW_RAW.md", "SLOT_PLAN_DO_SHD.md"],
-        "verify_slot": ["VERIFY_USER_SLOT.md"],
-        "global": ["RANKING_CROSSOVEROW_RAW.md", "SLOT_PLAN_DO_SHD.md"],
-        "between": ["SLOT_PLAN_DO_SHD.md", "RANKING_CROSSOVEROW_RAW.md"],
-        "filter_generator": ["01_CO_TERAZ_ZROBIC_FILTRY.md", "02_IMPORT_MINIDSP_SHD.md"],
-        "acoustic_crossover": ["01_CO_TERAZ_ZROBIC_AKUSTYCZNA_ZWROTNICA.md", "02_TOP_WARIANTY_AKUSTYCZNE.md"],
-        "slot4max": ["SLOT4_SHORTLIST_VALIDATOR_REPORT.md", "01_CO_TERAZ_ZROBIC_SLOT4MAX.md"],
-        "acoustic_biquad": ["01_CO_TERAZ_ZROBIC_ACOUSTIC_BIQUAD.md", "02_WARIANTY_REFERENCE_SAFE_KICK_CLEAN.md", "07_KALIBRACJA_REALNYMI_POMIARAMI.md"],
-        "time_domain": ["01_WERDYKT_90BW48_FAST.md", "05_JAKOSC_DANYCH_I_METODA.md"],
-    }.get(mode.key, [])
-    for name in candidates:
-        p = out_dir / name
-        if p.exists():
-            return p
-    return None
+class ScrolledTable(ttk.Treeview):
+    def __init__(self, parent, **kwargs):
+        self.container = ttk.Frame(parent)
+        super().__init__(self.container, **kwargs)
+        self.container.columnconfigure(0, weight=1)
+        self.container.rowconfigure(0, weight=1)
+        super().grid(row=0, column=0, sticky="nsew")
+        vertical = ttk.Scrollbar(self.container, orient="vertical", command=self.yview)
+        horizontal = ttk.Scrollbar(self.container, orient="horizontal", command=self.xview)
+        vertical.grid(row=0, column=1, sticky="ns")
+        horizontal.grid(row=1, column=0, sticky="ew")
+        self.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+
+    def grid(self, *args, **kwargs):
+        return self.container.grid(*args, **kwargs)
+
+    def pack(self, *args, **kwargs):
+        return self.container.pack(*args, **kwargs)
 
 
-class REWDOLauncher(tk.Tk):
-    def __init__(self) -> None:
+def table(parent, columns, height=5):
+    t = ScrolledTable(parent, columns=[c[0] for c in columns], show="headings", height=height, selectmode="browse")
+    for key, label, width in columns:
+        t.heading(key, text=label)
+        t.column(key, width=width, minwidth=60)
+    return t
+
+
+def field(parent, row, label, value="", choices=None, width=28):
+    ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=5, pady=4)
+    var = tk.StringVar(value="" if value is None else value)
+    widget = ttk.Entry(parent, textvariable=var, width=width) if choices is None else ttk.Combobox(parent, textvariable=var, values=list(choices), state="readonly", width=width)
+    widget.grid(row=row, column=1, sticky="ew", padx=5, pady=4)
+    return var
+
+
+class App(tk.Tk):
+    def __init__(self):
         super().__init__()
-        self.title("REWDO v20.31 — SAFETY HOTFIX / GAINSTATE")
-        self.geometry("1180x860")
-        self.minsize(940, 680)
-
-        self.proc: Optional[subprocess.Popen] = None
-        self.log_queue: "queue.Queue[str]" = queue.Queue()
-        self.last_out_dir: Optional[Path] = None
-        self.last_mode: Optional[Mode] = None
-
-        # v20.07: live progress/heartbeat state. Long ranking runs may produce
-        # no stdout for many minutes; without this GUI looked frozen even though
-        # the worker process was alive.
-        self.run_started_at: Optional[float] = None
-        self.last_output_at: Optional[float] = None
-        self.last_heartbeat_at: float = 0.0
-        self.live_log_path: Optional[Path] = None
-        self.last_file_snapshot: str = ""
-
-        self.mode_var = tk.StringVar(value=MODES[0].label)
-        self.mdat_var = tk.StringVar()
-        self.bridge_var = tk.StringVar()
-        self.api_url_var = tk.StringVar(value=DEFAULT_REW_API_URL)
-        self.out_var = tk.StringVar()
-        self.reference_var = tk.StringVar(value="90_BW48_slot2")
-        self.user_reference_var = tk.StringVar(value=str(_default_reference_90()))
-        self.workers_var = tk.IntVar(value=1)
-        self.extra_args_var = tk.StringVar()
-        self.open_after_var = tk.BooleanVar(value=True)
-        self.allpass_var = tk.BooleanVar(value=False)
-        self.cut_only_var = tk.BooleanVar(value=True)
-        self.raw_sub_trim_var = tk.DoubleVar(value=-6.0)
-        self.spatial_mdat_var = tk.StringVar()
-        self.empirical_calibration_var = tk.BooleanVar(value=False)
-        self.delay_refinement_var = tk.BooleanVar(value=True)
-        self.status_var = tk.StringVar(value="Gotowe.")
-        self.elapsed_var = tk.StringVar(value="")
-        self._log_expanded = False
-
-        self.verify_vars = {
-            "l_main": tk.StringVar(value="30.00"),
-            "r_main": tk.StringVar(value="30.00"),
-            "l_sub": tk.StringVar(value="20.40"),
-            "r_sub": tk.StringVar(value="19.10"),
-            "xo": tk.StringVar(value="90"),
-            "filter": tk.StringVar(value="BW48"),
-            "l_pol": tk.StringVar(value="OFF"),
-            "r_pol": tk.StringVar(value="OFF"),
-            "ranking_csv": tk.StringVar(),
-            "save_ref": tk.BooleanVar(value=False),
-        }
-
-        self._build_ui()
-        self._on_mode_change()
-        self.after(100, self._poll_log)
-
-    def _build_ui(self) -> None:
-        root = ttk.Frame(self, padding=10)
-        root.pack(fill="both", expand=True)
-
-        # v20.29: pionowy podział okna. Górny panel ustawień jest przewijany,
-        # a dolny panel logu ma gwarantowaną wysokość i regulowany separator.
-        # Dzięki temu log nie zapada się przy skalowaniu Windows ani w trybie 9.
-        main_pane = tk.PanedWindow(
-            root,
-            orient=tk.VERTICAL,
-            sashwidth=8,
-            sashrelief="raised",
-            borderwidth=0,
-            background="#C9CDD3",
-        )
-        main_pane.pack(fill="both", expand=True)
-        self.main_pane = main_pane
-
-        settings_shell = ttk.Frame(main_pane)
-        log_shell = ttk.Frame(main_pane)
-        main_pane.add(settings_shell, minsize=330, stretch="always")
-        main_pane.add(log_shell, minsize=190, stretch="always")
-
-        settings_canvas = tk.Canvas(settings_shell, highlightthickness=0, borderwidth=0)
-        settings_scroll = ttk.Scrollbar(settings_shell, orient="vertical", command=settings_canvas.yview)
-        settings_canvas.configure(yscrollcommand=settings_scroll.set)
-        settings_canvas.pack(side="left", fill="both", expand=True)
-        settings_scroll.pack(side="right", fill="y")
-
-        controls = ttk.Frame(settings_canvas, padding=(0, 0, 4, 0))
-        controls.columnconfigure(0, weight=1)
-        controls_window = settings_canvas.create_window((0, 0), window=controls, anchor="nw")
-
-        def _refresh_settings_scroll(_event=None):
-            try:
-                settings_canvas.configure(scrollregion=settings_canvas.bbox("all"))
-            except Exception:
-                pass
-
-        def _fit_settings_width(event=None):
-            try:
-                width = event.width if event is not None else settings_canvas.winfo_width()
-                settings_canvas.itemconfigure(controls_window, width=max(1, width))
-                _refresh_settings_scroll()
-            except Exception:
-                pass
-
-        def _settings_mousewheel(event):
-            try:
-                if getattr(event, "num", None) == 4:
-                    settings_canvas.yview_scroll(-3, "units")
-                elif getattr(event, "num", None) == 5:
-                    settings_canvas.yview_scroll(3, "units")
-                else:
-                    delta = getattr(event, "delta", 0)
-                    if delta:
-                        settings_canvas.yview_scroll(int(-delta / 120) * 3, "units")
-            except Exception:
-                pass
-
-        def _bind_settings_wheel(_event=None):
-            settings_canvas.bind_all("<MouseWheel>", _settings_mousewheel)
-            settings_canvas.bind_all("<Button-4>", _settings_mousewheel)
-            settings_canvas.bind_all("<Button-5>", _settings_mousewheel)
-
-        def _unbind_settings_wheel(_event=None):
-            settings_canvas.unbind_all("<MouseWheel>")
-            settings_canvas.unbind_all("<Button-4>")
-            settings_canvas.unbind_all("<Button-5>")
-
-        controls.bind("<Configure>", _refresh_settings_scroll)
-        settings_canvas.bind("<Configure>", _fit_settings_width)
-        settings_canvas.bind("<Enter>", _bind_settings_wheel)
-        settings_canvas.bind("<Leave>", _unbind_settings_wheel)
-
-        # Tryb
-        mode_frame = ttk.LabelFrame(controls, text="Tryb analizy")
-        mode_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        mode_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(mode_frame, text="Tryb:").grid(row=0, column=0, sticky="w", padx=8, pady=6)
-        mode_box = ttk.Combobox(mode_frame, textvariable=self.mode_var, values=[m.label for m in MODES], state="readonly")
-        mode_box.grid(row=0, column=1, sticky="ew", padx=8, pady=6)
-        mode_box.bind("<<ComboboxSelected>>", lambda _e: self._on_mode_change())
-
-        self.desc_label = ttk.Label(mode_frame, text="", wraplength=980)
-        self.desc_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
-
-        # Plik / folder
-        io_frame = ttk.LabelFrame(controls, text="Pliki")
-        io_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-        io_frame.columnconfigure(1, weight=1)
-
-        self.mdat_label = ttk.Label(io_frame, text="Dane REW:")
-        self.mdat_label.grid(row=0, column=0, sticky="w", padx=8, pady=6)
-        self.mdat_entry = ttk.Entry(io_frame, textvariable=self.mdat_var)
-        self.mdat_entry.grid(row=0, column=1, sticky="ew", padx=8, pady=6)
-        input_buttons = ttk.Frame(io_frame)
-        input_buttons.grid(row=0, column=2, sticky="ew", padx=8, pady=6)
-        self.mdat_button = ttk.Button(input_buttons, text="MDAT offline…", command=self._browse_mdat)
-        self.mdat_button.pack(side="left", fill="x", expand=True)
-        self.api_button = ttk.Button(input_buttons, text="REW API…", command=self._open_rew_api)
-        self.api_button.pack(side="left", fill="x", expand=True, padx=(6, 0))
-        ttk.Label(
-            io_frame,
-            text="Tryb offline nadal używa pliku .mdat. Przycisk REW API pobiera wybrane pomiary z uruchomionego REW 5.40 do lokalnej migawki .rewapi.json.",
-            wraplength=900,
-        ).grid(row=4, column=0, columnspan=3, sticky="w", padx=8, pady=(0, 7))
-
-        self.bridge_label = ttk.Label(io_frame, text="Gain Bridge MDAT:")
-        self.bridge_label.grid(row=1, column=0, sticky="w", padx=8, pady=6)
-        self.bridge_entry = ttk.Entry(io_frame, textvariable=self.bridge_var)
-        self.bridge_entry.grid(row=1, column=1, sticky="ew", padx=8, pady=6)
-        self.bridge_button = ttk.Button(io_frame, text="Wybierz bridge MDAT…", command=self._browse_bridge)
-        self.bridge_button.grid(row=1, column=2, sticky="ew", padx=8, pady=6)
-
-        ttk.Label(io_frame, text="Folder wyników:").grid(row=2, column=0, sticky="w", padx=8, pady=6)
-        ttk.Entry(io_frame, textvariable=self.out_var).grid(row=2, column=1, sticky="ew", padx=8, pady=6)
-        ttk.Button(io_frame, text="Wybierz folder…", command=self._browse_out).grid(row=2, column=2, sticky="ew", padx=8, pady=6)
-
-        ttk.Label(io_frame, text="Realna referencja SHD 90:").grid(row=3, column=0, sticky="w", padx=8, pady=6)
-        ttk.Entry(io_frame, textvariable=self.user_reference_var).grid(row=3, column=1, sticky="ew", padx=8, pady=6)
-        ref_buttons = ttk.Frame(io_frame)
-        ref_buttons.grid(row=3, column=2, sticky="ew", padx=8, pady=6)
-        ttk.Button(ref_buttons, text="Wybierz YAML…", command=self._browse_user_reference).pack(side="left", fill="x", expand=True)
-        ttk.Button(ref_buttons, text="Domyślna 90", command=self._reset_user_reference).pack(side="left", padx=(6, 0))
-
-        # Opcje
-        opt_frame = ttk.LabelFrame(controls, text="Opcje")
-        opt_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        for col in range(6):
-            opt_frame.columnconfigure(col, weight=1 if col in {1, 3, 5} else 0)
-
-        ttk.Label(opt_frame, text="Nazwa referencji / POST-DIRAC:").grid(row=0, column=0, sticky="w", padx=8, pady=6)
-        ttk.Entry(opt_frame, textvariable=self.reference_var, width=22).grid(row=0, column=1, sticky="ew", padx=8, pady=6)
-
-        ttk.Label(opt_frame, text="Workery:").grid(row=0, column=2, sticky="w", padx=8, pady=6)
-        ttk.Spinbox(opt_frame, from_=1, to=16, textvariable=self.workers_var, width=6).grid(row=0, column=3, sticky="w", padx=8, pady=6)
-
-        ttk.Checkbutton(opt_frame, text="Otwórz wyniki po zakończeniu", variable=self.open_after_var).grid(row=0, column=4, columnspan=2, sticky="w", padx=8, pady=6)
-
-        ttk.Label(opt_frame, text="Dodatkowe argumenty CLI:").grid(row=1, column=0, sticky="w", padx=8, pady=6)
-        ttk.Entry(opt_frame, textvariable=self.extra_args_var).grid(row=1, column=1, columnspan=5, sticky="ew", padx=8, pady=6)
-        self.allpass_check = ttk.Checkbutton(
-            opt_frame,
-            text="Tryb 9: oblicz all-pass OFF/ON; tylko zalecany AP trafia do ALLPASS_ON, odrzucony zostaje w diagnostyce",
-            variable=self.allpass_var,
-        )
-        self.allpass_check.grid(row=2, column=0, columnspan=6, sticky="w", padx=8, pady=6)
-
-        self.cut_only_check = ttk.Checkbutton(
-            opt_frame,
-            text="Tryb 9: dodatkowo oceniaj możliwość korekcji głównie przez tłumienie (diagnostyka tonalna)",
-            variable=self.cut_only_var,
-        )
-        self.cut_only_check.grid(row=3, column=0, columnspan=4, sticky="w", padx=8, pady=6)
-        ttk.Label(opt_frame, text="Metadane: tłumienie subów podczas RAW [dB]:").grid(row=3, column=4, sticky="e", padx=8, pady=6)
-        self.raw_sub_trim_spin = ttk.Spinbox(
-            opt_frame, from_=-30.0, to=6.0, increment=0.5, textvariable=self.raw_sub_trim_var, width=7
-        )
-        self.raw_sub_trim_spin.grid(row=3, column=5, sticky="w", padx=8, pady=6)
-
-        ttk.Label(opt_frame, text="Dodatkowe RAW z innych pozycji:").grid(row=4, column=0, sticky="w", padx=8, pady=6)
-        self.spatial_mdat_entry = ttk.Entry(opt_frame, textvariable=self.spatial_mdat_var)
-        self.spatial_mdat_entry.grid(row=4, column=1, columnspan=4, sticky="ew", padx=8, pady=6)
-        self.spatial_mdat_button = ttk.Button(opt_frame, text="Wybierz pliki…", command=self._browse_spatial_mdat)
-        self.spatial_mdat_button.grid(row=4, column=5, sticky="ew", padx=8, pady=6)
-
-        self.empirical_calibration_check = ttk.Checkbutton(
-            opt_frame,
-            text="Tryb 9: zastosuj ostrożną korektę empiryczną wyniku (obecna pewność: NISKA)",
-            variable=self.empirical_calibration_var,
-        )
-        self.empirical_calibration_check.grid(row=5, column=0, columnspan=3, sticky="w", padx=8, pady=6)
-        self.delay_refinement_check = ttk.Checkbutton(
-            opt_frame,
-            text="Tryb 9: dokładnie dostrój opóźnienia L/P niezależnie od kalibracji wyniku",
-            variable=self.delay_refinement_var,
-        )
-        self.delay_refinement_check.grid(row=5, column=3, columnspan=3, sticky="w", padx=8, pady=6)
-
-        # Verify panel
-        self.verify_frame = ttk.LabelFrame(controls, text="Verify User Slot SHD — delaye z konsoli miniDSP")
-        self.verify_frame.grid(row=3, column=0, sticky="ew", pady=(0, 8))
-        for col in range(8):
-            self.verify_frame.columnconfigure(col, weight=1 if col in {1, 3, 5, 7} else 0)
-
-        fields = [
-            ("L main", "l_main"), ("R main", "r_main"), ("L sub", "l_sub"), ("R sub", "r_sub"),
-            ("XO", "xo"), ("Filtr", "filter"), ("L pol", "l_pol"), ("R pol", "r_pol"),
-        ]
-        for i, (label, key) in enumerate(fields):
-            r = i // 4
-            c = (i % 4) * 2
-            ttk.Label(self.verify_frame, text=label + ":").grid(row=r, column=c, sticky="w", padx=8, pady=5)
-            ttk.Entry(self.verify_frame, textvariable=self.verify_vars[key], width=10).grid(row=r, column=c + 1, sticky="ew", padx=8, pady=5)
-
-        ttk.Label(self.verify_frame, text="Ranking CSV:").grid(row=2, column=0, sticky="w", padx=8, pady=5)
-        ttk.Entry(self.verify_frame, textvariable=self.verify_vars["ranking_csv"]).grid(row=2, column=1, columnspan=5, sticky="ew", padx=8, pady=5)
-        ttk.Button(self.verify_frame, text="Wybierz CSV…", command=self._browse_ranking_csv).grid(row=2, column=6, sticky="ew", padx=8, pady=5)
-        ttk.Checkbutton(self.verify_frame, text="Zapisz do wybranego pliku referencji", variable=self.verify_vars["save_ref"]).grid(row=2, column=7, sticky="w", padx=8, pady=5)
-
-        # Status/progress
-        status_frame = ttk.LabelFrame(controls, text="Status")
-        status_frame.grid(row=4, column=0, sticky="ew", pady=(0, 8))
-        status_frame.columnconfigure(0, weight=1)
-
-        self.status_label = ttk.Label(status_frame, textvariable=self.status_var, wraplength=980)
-        self.status_label.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
-        self.elapsed_label = ttk.Label(status_frame, textvariable=self.elapsed_var)
-        self.elapsed_label.grid(row=0, column=1, sticky="e", padx=8, pady=(6, 2))
-        self.progress = ttk.Progressbar(status_frame, mode="indeterminate")
-        self.progress.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(2, 8))
-
-        # Dolny panel: przyciski i log są zawsze widoczne. Separator nad panelem
-        # można przeciągać myszą, a przycisk pozwala szybko powiększyć log.
-        btn_frame = ttk.Frame(log_shell)
-        btn_frame.pack(fill="x", pady=(0, 6))
-        btn_frame.columnconfigure(0, weight=1)
-
-        ttk.Label(
-            btn_frame,
-            text="Przeciągnij poziomy separator, aby zmienić wysokość logu.",
-            foreground="#555555",
-        ).grid(row=0, column=0, sticky="w", padx=(4, 8), pady=3)
-        self.run_button = ttk.Button(btn_frame, text="Uruchom analizę", command=self._start)
-        self.run_button.grid(row=0, column=1, padx=5, pady=3)
-        self.stop_button = ttk.Button(btn_frame, text="Przerwij", command=self._stop, state="disabled")
-        self.stop_button.grid(row=0, column=2, padx=5, pady=3)
-        ttk.Button(btn_frame, text="Otwórz folder wyników", command=self._open_last_out).grid(row=0, column=3, padx=5, pady=3)
-        ttk.Button(btn_frame, text="Otwórz główny raport", command=self._open_main_report).grid(row=0, column=4, padx=5, pady=3)
-        ttk.Button(btn_frame, text="Wyczyść log", command=self._clear_log).grid(row=0, column=5, padx=5, pady=3)
-        self.log_size_button = ttk.Button(btn_frame, text="Powiększ log", command=self._toggle_log_pane)
-        self.log_size_button.grid(row=0, column=6, padx=(5, 2), pady=3)
-
-        log_frame = ttk.LabelFrame(log_shell, text="Log — zawsze widoczny")
-        log_frame.pack(fill="both", expand=True)
-        log_frame.rowconfigure(0, weight=1)
-        log_frame.columnconfigure(0, weight=1)
-
-        self.log_text = tk.Text(
-            log_frame,
-            wrap="word",
-            height=10,
-            state="disabled",
-            font=_default_log_font(),
-            relief="solid",
-            borderwidth=1,
-        )
-        self.log_text.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.log_text.configure(yscrollcommand=scroll.set)
-
-        # Ustaw początkowo około 260 px dla logu. Robimy to po zmapowaniu okna,
-        # ponieważ wcześniej PanedWindow nie zna jeszcze swojej wysokości.
-        self.after(180, lambda: self._set_log_pane_height(260))
-
-    def _set_log_pane_height(self, pixels: int) -> None:
+        self.title("REWDO 20.32")
+        self.geometry(f"{min(1120,self.winfo_screenwidth()-60)}x{min(730,self.winfo_screenheight()-90)}")
+        self.minsize(840, 560)
+        self.project, self.path = new_project(), None
+        self.job, self.latest, self.design_result, self.compare_result = None, None, None, None
+        self.log, self.stage, self.api = [], "Wczytaj pomiary, aby rozpocząć.", None
         try:
-            pane = self.main_pane
-            self.update_idletasks()
-            total = max(1, pane.winfo_height())
-            upper_min = 330
-            target_y = max(upper_min, total - max(190, int(pixels)))
-            pane.sash_place(0, 0, target_y)
-        except Exception:
-            pass
+            prefs = user_dir()/"preferences.json"
+            if prefs.is_file():
+                self.path = Path(json.loads(prefs.read_text(encoding="utf-8"))["last_project"])
+                self.project = load_project(self.path)
+        except Exception as exc:
+            self.path = None
+            self.stage = f"Nie przywrócono projektu: {exc}. Wskaż go przez Projekt → Otwórz."
+        style=ttk.Style(self)
+        if "clam" in style.theme_names():
+            style.theme_use("clam")
+        style.configure("TButton",padding=(8,4))
+        self.columnconfigure(0,weight=1)
+        self.rowconfigure(1,weight=1)
+        self.busy_widgets=[]
+        top=ttk.Frame(self,padding=10)
+        top.grid(row=0,column=0,sticky="ew")
+        top.columnconfigure(0,weight=1)
+        self.header=ttk.Label(top,font=("Segoe UI",12,"bold"))
+        self.header.grid(row=0,column=0,sticky="w")
+        self.ref_label=ttk.Label(top)
+        self.ref_label.grid(row=1,column=0,sticky="w")
+        menu=ttk.Menubutton(top,text="Projekt")
+        items=tk.Menu(menu,tearoff=False)
+        for title,fn in (("Nowy",self.new),("Otwórz",self.open),("Zapisz jako…",lambda:self.save(True))):
+            items.add_command(label=title,command=fn)
+        menu["menu"]=items
+        menu.grid(row=0,column=1,rowspan=2,padx=4)
+        self.busy_widgets.append(menu)
+        ttk.Button(top,text="Zapisz projekt",command=self.save).grid(row=0,column=2,rowspan=2,padx=4)
+        self.button(top,"Mój system",self.system).grid(row=0,column=3,rowspan=2,padx=4)
+        self.tabs=ttk.Notebook(self)
+        self.tabs.grid(row=1,column=0,sticky="nsew",padx=10)
+        self.pages=[]
+        for name in STEPS:
+            page=ttk.Frame(self.tabs,padding=10)
+            page.columnconfigure(0,weight=1)
+            self.tabs.add(page,text=name)
+            self.pages.append(page)
+        self.measurements_page()
+        self.design_page()
+        self.compare_page()
+        bottom=ttk.Frame(self,padding=10)
+        bottom.grid(row=2,column=0,sticky="ew")
+        bottom.columnconfigure(0,weight=1)
+        self.status=ttk.Label(bottom,text=self.stage,wraplength=700)
+        self.status.grid(row=0,column=0,sticky="w")
+        self.stop=ttk.Button(bottom,text="Przerwij",command=self.cancel,state="disabled")
+        self.stop.grid(row=0,column=1,padx=4)
+        ttk.Button(bottom,text="Szczegóły techniczne",command=self.details).grid(row=0,column=2,padx=4)
+        self.refresh()
+        self.tabs.select(min(2,max(0,self.project["ui"]["step"])))
+        self.tabs.bind("<<NotebookTabChanged>>",self.step_changed)
+        self.protocol("WM_DELETE_WINDOW",self.close)
+        self.after(100,self.poll)
 
-    def _toggle_log_pane(self) -> None:
-        self._log_expanded = not self._log_expanded
-        if self._log_expanded:
-            self._set_log_pane_height(430)
-            self.log_size_button.configure(text="Zmniejsz log")
-        else:
-            self._set_log_pane_height(260)
-            self.log_size_button.configure(text="Powiększ log")
+    def button(self,parent,title,fn):
+        b=ttk.Button(parent,text=title,command=fn)
+        self.busy_widgets.append(b)
+        return b
 
-    def _selected_mode(self) -> Mode:
-        return MODE_BY_LABEL.get(self.mode_var.get(), MODES[0])
+    def description(self,page,text):
+        ttk.Label(page,text=text,wraplength=950).grid(row=0,column=0,sticky="w",pady=(0,8))
 
-    def _default_out_dir(self, mode: Mode) -> Path:
-        return APP_DIR / mode.output_dir
+    def measurements_page(self):
+        p=self.pages[0]
+        self.description(p,"Wczytaj pomiary. Sprawdzę, do czego można ich użyć i czego ewentualnie brakuje.")
+        row=ttk.Frame(p)
+        row.grid(row=1,column=0,sticky="ew",pady=(0,8))
+        load=ttk.Menubutton(row,text="Wczytaj pomiary")
+        menu=tk.Menu(load,tearoff=False)
+        menu.add_command(label="Z pliku REW",command=self.import_file)
+        menu.add_command(label="Z otwartego REW",command=self.api_dialog)
+        load["menu"]=menu
+        load.pack(side="left")
+        self.busy_widgets.append(load)
+        for name,fn in (("Przypisz / popraw ślady",self.mapping),("Wskaż przeniesiony plik",self.locate),("Sprawdź ponownie",lambda:self.start("check"))):
+            self.button(row,name,fn).pack(side="left",padx=5)
+        self.traces=table(p,[("source","Źródło",135),("name","Nazwa w REW",175),("config","Ustawienie",110),("element","Mierzony element",115),("channel","Kanał",70),("mic","Pozycja mikrofonu",125),("stage","Etap",105)],8)
+        self.traces.grid(row=2,column=0,sticky="nsew")
+        p.rowconfigure(2,weight=1)
+        self.traces.bind("<Double-1>",lambda e:self.mapping())
+        self.measure_summary=ttk.Label(p,text="",wraplength=950,justify="left")
+        self.measure_summary.grid(row=3,column=0,sticky="ew",pady=8)
+        self.gain_label=ttk.Label(p,wraplength=950)
+        self.gain_label.grid(row=4,column=0,sticky="w")
+        self.button(p,"Sprawdź powiązanie odniesienia",lambda:self.start("verify")).grid(row=5,column=0,sticky="w",pady=(8,0))
 
-    def _on_mode_change(self) -> None:
-        mode = self._selected_mode()
-        self.desc_label.configure(text=mode.description)
+    def design_page(self):
+        p=self.pages[1]
+        self.description(p,"Poszukam lepszego połączenia kolumn z subwooferami. Wynik sprawdzisz pomiarem i odsłuchem.")
+        row=ttk.Frame(p)
+        row.grid(row=1,column=0,sticky="ew")
+        self.button(row,"Znajdź ustawienia do sprawdzenia",lambda:self.start("standard")).pack(side="left")
+        self.button(row,"Szukaj dokładniej — własna zwrotnica",lambda:self.start("custom")).pack(side="left",padx=8)
+        self.design_summary=ttk.Label(p,text="Najpierw potwierdź pomiary, poziomy i odniesienie. OFF/OFF, all-pass wyłączony.",wraplength=950)
+        self.design_summary.grid(row=2,column=0,sticky="ew",pady=10)
+        self.candidates=table(p,[("setting","Ustawienie",245),("sum","Zmiana sumowania L/R [dB]",230),("body","100–220 Hz [dB]",145),("evidence","Dowód",240)],3)
+        self.candidates.grid(row=3,column=0,sticky="ew")
+        self.candidates.bind("<<TreeviewSelect>>",self.select_candidate)
+        self.candidate_note=ttk.Label(p,wraplength=950,justify="left")
+        self.candidate_note.grid(row=4,column=0,sticky="ew",pady=8)
+        self.design_plot=ttk.Frame(p)
+        self.design_plot.grid(row=5,column=0,sticky="nsew")
+        p.rowconfigure(5,weight=1)
+        row=ttk.Frame(p)
+        row.grid(row=6,column=0,sticky="ew",pady=(8,0))
+        ttk.Button(row,text="Zapisz podsumowanie",command=self.summary).pack(side="left")
+        self.export_button=self.button(row,"Przygotuj ustawienia do testu",self.export)
 
-        if not self.out_var.get().strip() or self.last_mode is None or Path(self.out_var.get()).name == self.last_mode.output_dir:
-            self.out_var.set(str(self._default_out_dir(mode)))
+    def compare_page(self):
+        p=self.pages[2]
+        self.description(p,"Porównaj rzeczywiste pomiary i zapisz, które ustawienie brzmi lepiej.")
+        row=ttk.Frame(p)
+        row.grid(row=1,column=0,sticky="ew")
+        self.stage_var=tk.StringVar(value=self.project["ui"].get("compare_stage","Po Dirac"))
+        stage_combo=ttk.Combobox(row,textvariable=self.stage_var,values=("Przed Dirac","Po Dirac"),state="readonly",width=14)
+        stage_combo.pack(side="left")
+        stage_combo.bind("<<ComboboxSelected>>",self.invalidate_comparison)
+        self.busy_widgets.append(stage_combo)
+        self.a_var,self.b_var=tk.StringVar(),tk.StringVar()
+        self.compare_combos=[]
+        for title,var in ((" A:",self.a_var),(" B:",self.b_var)):
+            ttk.Label(row,text=title).pack(side="left")
+            combo=ttk.Combobox(row,textvariable=var,state="readonly",width=28)
+            combo.pack(side="left",padx=4)
+            combo.bind("<<ComboboxSelected>>",self.invalidate_comparison)
+            self.busy_widgets.append(combo)
+            self.compare_combos.append(combo)
+        self.button(p,"Porównaj z moim ustawieniem",self.compare).grid(row=2,column=0,sticky="w",pady=8)
+        self.compare_summary=ttk.Label(p,text="Możesz zacząć od gotowych pomiarów; RAW i referencja do projektowania nie są wymagane.",wraplength=950)
+        self.compare_summary.grid(row=3,column=0,sticky="ew",pady=(0,6))
+        self.comparison=table(p,[("mic","Pozycja mikrofonu",180),("role","Suma",100),("bass","30–60 Hz [dB]",170),("xo","80–110 Hz [dB]",170),("body","100–220 Hz [dB]",170)],3)
+        self.comparison.grid(row=4,column=0,sticky="ew")
+        self.comparison.bind("<<TreeviewSelect>>",self.compare_curve)
+        self.compare_plot=ttk.Frame(p)
+        self.compare_plot.grid(row=5,column=0,sticky="nsew")
+        p.rowconfigure(5,weight=1)
+        row=ttk.LabelFrame(p,text="Odsłuch — wybór użytkownika",padding=6)
+        row.grid(row=6,column=0,sticky="ew",pady=(6,0))
+        row.columnconfigure(3,weight=1)
+        self.choice=tk.StringVar(value="brak wyraźnej różnicy")
+        ttk.Combobox(row,textvariable=self.choice,values=("A","B","brak wyraźnej różnicy"),state="readonly",width=23).grid(row=0,column=0,padx=4)
+        self.matched=tk.BooleanVar(value=False)
+        ttk.Checkbutton(row,text="Wyrównano głośność",variable=self.matched).grid(row=0,column=1,padx=4)
+        self.button(row,"Zapisz odsłuch",self.listening).grid(row=0,column=2,padx=4)
+        ttk.Button(row,text="Zapisz podsumowanie",command=self.summary).grid(row=0,column=3,padx=4)
+        self.note=tk.StringVar()
+        ttk.Entry(row,textvariable=self.note).grid(row=1,column=0,columnspan=4,sticky="ew",pady=4)
+        ttk.Label(row,text="Notatka: wokal, fundament i kontrola basu, scena, zmęczenie.").grid(row=2,column=0,columnspan=4,sticky="w")
 
-        mdat_state = "normal" if mode.needs_mdat else "disabled"
-        self.mdat_entry.configure(state=mdat_state)
-        self.mdat_button.configure(state=mdat_state)
-        self.api_button.configure(state="normal" if mode.needs_mdat and not mode.needs_bridge else "disabled")
-        bridge_state = "normal" if mode.needs_bridge else "disabled"
-        self.bridge_entry.configure(state=bridge_state)
-        self.bridge_button.configure(state=bridge_state)
+    def autosave(self):
+        if self.path is None:
+            self.path=user_dir()/"projekty"/self.project["id"]/"projekt.rewdo.json"
+        save_project(self.path,self.project)
 
-        # Opcje projektanta biquadów są dostępne wyłącznie w trybie 9.
-        if mode.needs_bridge:
-            self.mdat_label.configure(text="Pełny RAW MDAT:")
-            self.bridge_label.configure(text="Gain Bridge MDAT:")
-        elif mode.key == "time_domain":
-            self.mdat_label.configure(text="Migawka REW API z impulsem:")
-            if self.reference_var.get().strip() in {"", "90_BW48_slot2"}:
-                self.reference_var.set("REF_SLOT2_90BW48_G0")
-        else:
-            self.mdat_label.configure(text="Dane REW:")
-            if self.reference_var.get().strip() in {"90BW48_SLOT2_BASELINE", "REF_SLOT2_90BW48_G0"}:
-                self.reference_var.set("90_BW48_slot2")
+    def step_changed(self,event=None):
+        self.project["ui"]["step"]=self.tabs.index(self.tabs.select())
+        if self.path:
+            self.autosave()
 
-        mode9_state = "normal" if mode.key == "acoustic_biquad" else "disabled"
-        self.allpass_check.configure(state=mode9_state)
-        self.cut_only_check.configure(state=mode9_state)
-        self.raw_sub_trim_spin.configure(state=mode9_state)
-        self.spatial_mdat_entry.configure(state=mode9_state)
-        self.spatial_mdat_button.configure(state=mode9_state)
-        self.empirical_calibration_check.configure(state=mode9_state)
-        self.delay_refinement_check.configure(state=mode9_state)
-
-        # Verify frame aktywny tylko dla trybu 4
-        verify_state = "normal" if mode.verify_mode else "disabled"
-        for child in self.verify_frame.winfo_children():
-            try:
-                child.configure(state=verify_state)
-            except Exception:
-                pass
-
-        self.last_mode = mode
-
-    def _browse_mdat(self) -> None:
-        initial = str(Path(self.mdat_var.get()).parent) if self.mdat_var.get() else str(APP_DIR)
-        path = filedialog.askopenfilename(
-            title="Wybierz plik REW .mdat lub migawkę API",
-            initialdir=initial,
-            filetypes=[("Dane REWDO", "*.mdat *.rewapi.json"), ("REW MDAT", "*.mdat"), ("Migawka REW API", "*.rewapi.json"), ("Wszystkie pliki", "*.*")],
-        )
-        if path:
-            self.mdat_var.set(path)
-
-    def _browse_bridge(self) -> None:
-        initial = str(Path(self.bridge_var.get()).parent) if self.bridge_var.get() else str(APP_DIR)
-        path = filedialog.askopenfilename(
-            title="Wybierz plik Gain Bridge .mdat",
-            initialdir=initial,
-            filetypes=[("REW MDAT", "*.mdat"), ("Wszystkie pliki", "*.*")],
-        )
-        if path:
-            self.bridge_var.set(path)
-
-    def _browse_spatial_mdat(self) -> None:
-        initial = str(Path(self.mdat_var.get()).parent) if self.mdat_var.get() else str(APP_DIR)
-        paths = filedialog.askopenfilenames(
-            title="Wybierz dodatkowe czyste RAW z innych pozycji",
-            initialdir=initial,
-            filetypes=[("REW MDAT", "*.mdat"), ("Wszystkie pliki", "*.*")],
-        )
-        if paths:
-            self.spatial_mdat_var.set(" | ".join(paths))
-
-    def _open_rew_api(self) -> None:
-        """Otwórz bezpieczne, odczytowe połączenie z lokalnym REW 5.40."""
-        current = self.mdat_var.get().strip()
-        initial_dir = Path(current).parent if current else APP_DIR
-
-        def use_snapshot(path: Path) -> None:
-            self.mdat_var.set(str(path))
-            try:
-                self.api_url_var.set(dialog.url_var.get())
-            except Exception:
-                pass
-            self._log(f"REW API: ustawiono migawkę wejściową {path}")
-            self.status_var.set("Migawka REW API gotowa. Można uruchomić wybrany tryb tak samo jak dla MDAT.")
-
-        time_mode = self._selected_mode().key == "time_domain"
-        dialog = REWApiDialog(
-            self,
-            initial_url=self.api_url_var.get(),
-            initial_dir=initial_dir,
-            on_snapshot=use_snapshot,
-            time_analysis_mode=time_mode,
-            include_group_delay_default=True,
-            include_impulse_default=time_mode,
-        )
-        dialog.grab_set()
-
-    def _browse_out(self) -> None:
-        initial = self.out_var.get() or str(APP_DIR)
-        path = filedialog.askdirectory(title="Wybierz folder wyników", initialdir=initial)
-        if path:
-            self.out_var.set(path)
-
-    def _browse_user_reference(self) -> None:
-        current = _resolve_user_reference_path(self.user_reference_var.get())
-        initial = str(current.parent) if current.parent.exists() else str(APP_DIR)
-        path = filedialog.askopenfilename(
-            title="Wybierz REALNĄ referencję SHD 90 BW48 YAML",
-            initialdir=initial,
-            filetypes=[("Referencja YAML", "*.yaml *.yml"), ("Wszystkie pliki", "*.*")],
-        )
-        if path:
-            candidate = _resolve_user_reference_path(path)
-            ok, reason = _validate_real_reference_90(candidate)
-            if not ok:
-                messagebox.showerror(
-                    "To nie jest realna referencja SHD 90",
-                    reason + "\n\nUżyj przycisku 'Domyślna 90' albo uruchom tryb 4 — Verify User Slot SHD i zapisz realną referencję 90."
-                )
+    def save(self,as_new=False):
+        if as_new or self.path is None:
+            path=filedialog.asksaveasfilename(parent=self,initialfile="projekt.rewdo.json",defaultextension=".json",filetypes=[("Projekt REWDO","*.json")])
+            if not path:
                 return
-            self.user_reference_var.set(str(candidate))
-
-    def _reset_user_reference(self) -> None:
-        self.user_reference_var.set(str(_default_reference_90()))
-
-    def _browse_ranking_csv(self) -> None:
-        initial = str(APP_DIR)
-        path = filedialog.askopenfilename(
-            title="Wybierz RANKING_CROSSOVEROW_RAW.csv",
-            initialdir=initial,
-            filetypes=[("CSV", "*.csv"), ("Wszystkie pliki", "*.*")],
-        )
-        if path:
-            self.verify_vars["ranking_csv"].set(path)
-
-    def _log(self, text: str) -> None:
-        text = _repair_log_text(text)
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", text)
-        if not text.endswith("\n"):
-            self.log_text.insert("end", "\n")
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
-
-        # v20.07: persistent live log. This is useful when the GUI is closed,
-        # Windows buffers stdout, or the user needs to send diagnostics.
+            self.path=Path(path)
         try:
-            if self.live_log_path is not None:
-                with open(self.live_log_path, "a", encoding="utf-8", errors="replace") as f:
-                    f.write(text)
-                    if not text.endswith("\n"):
-                        f.write("\n")
-        except Exception:
-            pass
+            self.autosave()
+            self.status.configure(text="Zapisano projekt. Pliki źródłowe pozostają w swoich lokalizacjach.")
+        except Exception as exc:
+            messagebox.showerror("Zapis projektu",str(exc),parent=self)
+
+    def new(self):
+        if self.job:
+            return
+        self.autosave()
+        self.project,self.path,self.latest=new_project(),None,None
+        self.refresh()
+        self.tabs.select(0)
+
+    def open(self):
+        if self.job:
+            return
+        path=filedialog.askopenfilename(parent=self,filetypes=[("Projekt REWDO","*.json")])
+        if path:
+            try:
+                loaded=load_project(path)
+                self.autosave()
+                self.project,self.path,self.latest=loaded,Path(path),None
+                self.refresh()
+                self.tabs.select(loaded["ui"]["step"])
+            except Exception as exc:
+                messagebox.showerror("Projekt",str(exc),parent=self)
+
+    def choices(self):
+        return {c["label"]+f" · v{c['version']} [{c['id'][:6]}]":c["key"] for c in self.project["configurations"]}
+
+    def config_label(self,key):
+        return next((c["label"]+f" · v{c['version']}" for c in self.project["configurations"] if c["key"]==key),"nieprzypisane")
 
     @staticmethod
-    def _fmt_elapsed(seconds: float) -> str:
-        seconds = max(0, int(seconds))
-        h, rem = divmod(seconds, 3600)
-        m, s = divmod(rem, 60)
-        if h:
-            return f"{h:d}:{m:02d}:{s:02d}"
-        return f"{m:02d}:{s:02d}"
+    def fmt(value):
+        return "—" if value is None else f"{value:+.2f}"
 
-    def _snapshot_out_dir(self) -> str:
-        out = self.last_out_dir
-        if not out or not out.exists():
-            return "brak folderu wyników"
-        try:
-            files = [p for p in out.iterdir() if p.is_file()]
-            interesting = [p for p in files if p.suffix.lower() in {".md", ".csv", ".txt", ".log"}]
-            if not interesting:
-                return "brak plików wynikowych"
-            newest = max(interesting, key=lambda x: x.stat().st_mtime)
-            return f"plików: {len(interesting)}, ostatni: {newest.name}, {time.strftime('%H:%M:%S', time.localtime(newest.stat().st_mtime))}"
-        except Exception as exc:
-            return f"nie udało się odczytać folderu: {exc}"
+    def refresh(self):
+        c=active_config(self.project)
+        self.header.configure(text=self.project["name"])
+        self.ref_label.configure(text="Odniesienie: "+(self.config_label(c["key"]) if c else "wybierz w Mój system"))
+        self.traces.delete(*self.traces.get_children())
+        for s in self.project["sources"]:
+            for i,t in enumerate(s["traces"]):
+                parts=t["role"].split()
+                channel=parts[0] if parts[0] in ("L","R","L+R") else "nieustalony"
+                element={"main":"Kolumna","sub":"Subwoofer","sum":"Suma"}.get(parts[-1],"Suma stereo" if channel=="L+R" else "nieustalony")
+                self.traces.insert("","end",iid=f"{s['id']}:{i}",values=(s["name"][:30],t["name"],self.config_label(t["preset"] or s["configuration"]),element,channel,t["microphone"] or "nieustalona",t["stage"]))
+        choices=self.choices()
+        for combo in self.compare_combos:
+            combo["values"]=list(choices)
+        for field_name,var in (("compare_a",self.a_var),("compare_b",self.b_var)):
+            saved=self.project["ui"].get(field_name)
+            if saved:
+                var.set(next((label for label,key in choices.items() if key==saved),""))
+        self.stage_var.set(self.project["ui"].get("compare_stage","Po Dirac"))
+        if self.a_var.get() not in choices:
+            self.a_var.set(next((n for n,k in choices.items() if k==self.project["active_configuration"]),next(iter(choices),"")))
+        if self.b_var.get() not in choices:
+            self.b_var.set(next((n for n in choices if n!=self.a_var.get()),""))
+        self.gain_label.configure(text="Poziom subów [dB L/R]: "+" · ".join(k+" "+"/".join(self.fmt(v[s]) for s in ("L","R")) for k,v in self.project["gains"].items())+" — edycja: Mój system")
+        self.candidates.delete(*self.candidates.get_children())
+        self.candidates.insert("","end",iid="reference",values=(c["label"] if c else "Odniesienie","0 / 0","0","Wpis z konsoli"))
+        self.export_button.pack_forget()
+        self.design_result,self.compare_result=None,None
+        self.comparison.delete(*self.comparison.get_children())
+        self.design_summary.configure(text="Wyniki zależą od aktualnej wersji projektu. Potwierdź dane i uruchom dobór.")
+        self.candidate_note.configure(text="")
+        for frame in (self.design_plot,self.compare_plot):
+            self.plot(frame,[],"")
+        for tasks in (("standard","custom"),("compare",),("check",)):
+            result=next((r for r in reversed(self.project["runs"]) if r.get("task") in tasks),None)
+            if result and result_is_current(self.project,result):
+                self.present(result)
 
-    def _write_live_header(self, mode: Mode, out_dir: Path, cmd: List[str]) -> None:
-        try:
-            self.live_log_path = out_dir / "REWDO_GUI_LIVE_RUN.log"
-            header = [
-                "=" * 80,
-                "REWDO v20.31 — dziennik uruchomienia",
-                time.strftime("%Y-%m-%d %H:%M:%S"),
-                f"TRYB: {mode.label}",
-                f"OUT:  {out_dir}",
-                "CMD:  " + " ".join([f'"{c}"' if " " in c else c for c in cmd]),
-                "=" * 80,
-                "",
-            ]
-            self.live_log_path.write_text("\n".join(header), encoding="utf-8", errors="replace")
-        except Exception:
-            self.live_log_path = None
+    def selected_source(self):
+        ids=self.traces.selection()
+        if not ids:
+            messagebox.showinfo("Pomiary","Zaznacz ślad źródła.",parent=self)
+            return None
+        return next(s for s in self.project["sources"] if s["id"]==ids[0].split(":")[0])
 
-    def _clear_log(self) -> None:
-        self.log_text.configure(state="normal")
-        self.log_text.delete("1.0", "end")
-        self.log_text.configure(state="disabled")
+    def import_file(self):
+        path=filedialog.askopenfilename(parent=self,title="Wczytaj pomiary",filetypes=[("MDAT / REW API JSON","*.mdat *.json")])
+        if path:
+            self.start("import",{"path":path})
 
-    def _start(self) -> None:
-        if self.proc is not None:
-            messagebox.showinfo("Proces działa", "Analiza już trwa.")
-            return
-
-        mode = self._selected_mode()
-        try:
-            out_dir = Path(self.out_var.get()).expanduser().resolve()
-            out_dir.mkdir(parents=True, exist_ok=True)
-            mdat = Path(self.mdat_var.get()).expanduser().resolve() if mode.needs_mdat else Path()
-            if mode.needs_mdat and not mdat.exists():
-                messagebox.showerror("Brak danych", "Wybierz istniejący plik .mdat albo utwórz migawkę przez przycisk REW API.")
-                return
-            bridge = Path(self.bridge_var.get()).expanduser().resolve() if mode.needs_bridge else None
-            if mode.needs_bridge and (bridge is None or not bridge.exists()):
-                messagebox.showerror("Brak Gain Bridge", "Ten tryb wymaga istniejącego pliku Gain Bridge .mdat z L_SUM_SUB0 i R_SUM_SUB0.")
-                return
-            if mode.needs_bridge and (mdat.suffix.lower() != ".mdat" or bridge.suffix.lower() != ".mdat"):
-                messagebox.showerror("Wymagane pliki MDAT", "Wybrany tryb wymaga pełnego RAW i osobnego Gain Bridge w formacie REW .mdat.")
-                return
-            if mode.key == "time_domain" and not is_rew_api_snapshot(mdat):
-                messagebox.showerror(
-                    "Wymagana migawka z impulsem",
-                    "Tryb 10 wymaga pliku *.rewapi.json utworzonego przez REW API z zaznaczonymi opcjami Pobierz group delay i Pobierz impuls.",
-                )
-                return
-
-            user_reference_path = _resolve_user_reference_path(self.user_reference_var.get())
-            if _reference_required(mode):
-                if not user_reference_path.exists():
-                    messagebox.showerror(
-                        "Brak pliku referencji",
-                        "Wybrany plik referencji SHD nie istnieje:\n"
-                        f"{user_reference_path}\n\n"
-                        "Wybierz istniejący plik YAML albo użyj trybu 4, żeby zapisać realną referencję."
-                    )
-                    return
-                ok, reason = _validate_real_reference_90(user_reference_path)
-                if not ok:
-                    messagebox.showerror(
-                        "Błędny plik realnej referencji SHD 90",
-                        reason + "\n\nW tym polu musi być USER_REFERENCE_90BW48.yaml z realnymi delayami main/sub. "
-                        "Plik USER_REFERENCE_102BW48.yaml jest tylko profilem kandydata odsłuchowego i nie ma realnych delayów."
-                    )
-                    return
-            if mode.verify_mode and self.verify_vars["save_ref"].get():
+    def locate(self):
+        s=self.selected_source()
+        if s and not self.job:
+            path=filedialog.askopenfilename(parent=self,title="Wskaż ten sam plik w nowej lokalizacji")
+            if path:
                 try:
-                    user_reference_path.parent.mkdir(parents=True, exist_ok=True)
-                except Exception as exc:
-                    messagebox.showerror("Błąd referencji", f"Nie mogę przygotować folderu referencji:\n{exc}")
-                    return
+                    relocate(s,path)
+                    self.autosave()
+                    self.refresh()
+                except ValueError as exc:
+                    messagebox.showerror("Tożsamość pliku",str(exc),parent=self)
 
-            verify_values = {k: (v.get() if hasattr(v, "get") else str(v)) for k, v in self.verify_vars.items()}
-            verify_values["save_ref"] = str(bool(self.verify_vars["save_ref"].get()))
+    def dialog(self,title,size):
+        win=tk.Toplevel(self)
+        win.title(title)
+        win.geometry(size)
+        win.transient(self)
+        win.grab_set()
+        return win
 
-            cmd = build_command(
-                mode=mode,
-                mdat_path=mdat,
-                out_dir=out_dir,
-                reference=self.reference_var.get(),
-                user_reference_path=user_reference_path,
-                workers=int(self.workers_var.get()),
-                extra_args=self.extra_args_var.get(),
-                verify_values=verify_values,
-                bridge_path=bridge,
-                allpass_enabled=bool(self.allpass_var.get()) if mode.key == "acoustic_biquad" else False,
-                cut_only_enabled=bool(self.cut_only_var.get()) if mode.key == "acoustic_biquad" else False,
-                raw_sub_trim_db=float(self.raw_sub_trim_var.get()) if mode.key == "acoustic_biquad" else -6.0,
-                spatial_mdat_paths=[x.strip() for x in self.spatial_mdat_var.get().split("|") if x.strip()] if mode.key == "acoustic_biquad" else [],
-                empirical_calibration_enabled=bool(self.empirical_calibration_var.get()) if mode.key == "acoustic_biquad" else True,
-                delay_refinement_enabled=bool(self.delay_refinement_var.get()) if mode.key == "acoustic_biquad" else True,
-            )
-        except Exception as exc:
-            messagebox.showerror("Błąd konfiguracji", str(exc))
+    def system(self):
+        if self.job:
             return
+        win=self.dialog("Mój system","800x620")
+        win.columnconfigure(0,weight=1)
+        win.rowconfigure(0,weight=1)
+        book=ttk.Notebook(win)
+        book.grid(row=0,column=0,sticky="nsew",padx=12,pady=12)
+        panels=[]
+        for name in ("Odniesienie","Poziomy","Zakres szukania","System"):
+            frame=ttk.Frame(book,padding=12)
+            frame.columnconfigure(1,weight=1)
+            book.add(frame,text=name)
+            panels.append(frame)
+        c=active_config(self.project)
+        ref=panels[0]
+        choices={"Nie wybrano":"",**self.choices()}
+        history=field(ref,0,"Historia",next((n for n,k in choices.items() if c and k==c["key"]),"Nie wybrano"),choices)
+        def activate():
+            key=choices.get(history.get())
+            if key:
+                self.project["active_configuration"]=key
+                changed(self.project)
+                self.autosave()
+                self.refresh()
+                win.destroy()
+        ttk.Button(ref,text="Użyj wybranej konfiguracji",command=activate).grid(row=1,column=1,sticky="w",pady=5)
+        label=field(ref,2,"Nazwa",c["label"] if c else "Moje ustawienie")
+        variables={}
+        for row,(key,title) in enumerate((("fc","Podział [Hz]"),("filter","Rodzina"),("l_main_ms","L kolumna [ms]"),("r_main_ms","R kolumna [ms]"),("l_sub_ms","L subwoofer [ms]"),("r_sub_ms","R subwoofer [ms]")),3):
+            variables[key]=field(ref,row,title,c["settings"][key] if c else "BW48" if key=="filter" else "",("BW48","LR48","BW24","LR24") if key=="filter" else None)
+        confirmed=tk.BooleanVar(value=c["console_confirmed"] if c else False)
+        ttk.Checkbutton(ref,text="Sprawdziłem wartości w konsoli; polaryzacja OFF/OFF",variable=confirmed).grid(row=9,column=0,columnspan=2,sticky="w",pady=8)
+        ttk.Label(ref,text="Zmiana parametrów tworzy nową wersję. Wpis nie jest dowodem pomiarowym.\nDo samego porównania możesz dodać tylko nazwę presetu poniżej.\nW Historii wybierzesz konfigurację odniesienia.").grid(row=10,column=0,columnspan=2,sticky="w")
+        def measurement_preset():
+            put_measurement_preset(self.project,label.get())
+            self.autosave()
+            self.refresh()
+            win.destroy()
+        ttk.Button(ref,text="Dodaj tylko nazwę presetu do porównania (bez delayów)",command=measurement_preset).grid(row=11,column=0,columnspan=2,sticky="w",pady=8)
+        gains={}
+        panel=panels[1]
+        ttk.Label(panel,text="Cyfrowy poziom subów w miniDSP — nie pokrętło REL ani głośność główna.",wraplength=690).grid(row=0,column=0,columnspan=4,pady=(0,10),sticky="w")
+        for col,title in enumerate(("Kiedy","L [dB]","R [dB]","Źródło: konsola, data, sesja")):
+            ttk.Label(panel,text=title).grid(row=1,column=col,padx=5,sticky="w")
+        for row,(key,title) in enumerate((("raw","Pomiar bazowy"),("dirac","Pomiar Dirac"),("listening","Odsłuch")),2):
+            ttk.Label(panel,text=title).grid(row=row,column=0,padx=5,pady=8,sticky="w")
+            gains[key]={}
+            for col,f in enumerate(("L","R","origin"),1):
+                value=self.project["gains"][key][f]
+                var=tk.StringVar(value="" if value is None else value)
+                gains[key][f]=var
+                ttk.Entry(panel,textvariable=var,width=10 if f!="origin" else 30).grid(row=row,column=col,padx=5,sticky="ew")
+        ttk.Label(panel,text="Brak wartości nie uruchamia domyślnych −6/−4/0. Różne L/R są zachowane, lecz obecne projektanty wymagają wspólnego poziomu. Zmiana poziomów wymaga sprawdzenia pomiarem.",wraplength=680).grid(row=6,column=0,columnspan=4,pady=20,sticky="w")
+        search={key:field(panels[2],row,title,self.project["analysis"][key]) for row,(key,title) in enumerate((("fc_low","Od [Hz]"),("fc_high","Do [Hz]"),("fc_step","Krok [Hz]")))}
+        search_ok=tk.BooleanVar(value=self.project["analysis"]["confirmed"])
+        ttk.Checkbutton(panels[2],text="Akceptuję zakres poszukiwania BW48/LR48",variable=search_ok).grid(row=3,column=0,columnspan=2,pady=10)
+        ttk.Label(panels[2],text="Własna zwrotnica rozwija sekcje fc/Q wokół baz z tego zakresu.\nAll-pass i korekcja empiryczna pozostają wyłączone.").grid(row=4,column=0,columnspan=2,sticky="w",pady=8)
+        system={key:field(panels[3],row,title,self.project["system"].get(key)) for row,(key,title) in enumerate((("speakers","Kolumny"),("subs","Subwoofery"),("dsp","DSP"),("dirac_low","Dolna kurtyna [Hz]"),("dirac_high","Górna kurtyna [Hz]")))}
+        project_name=field(panels[3],5,"Nazwa projektu",self.project["name"])
+        def commit():
+            try:
+                p=copy.deepcopy(self.project)
+                for state,fields in gains.items():
+                    p["gains"][state]={f:(v.get().strip() if f=="origin" else number(v.get(),state+"/"+f,low=-60,high=12) if v.get().strip() else None) for f,v in fields.items()}
+                for k,v in search.items():
+                    p["analysis"][k]=number(v.get(),k,low=.5 if k=="fc_step" else 20,high=20 if k=="fc_step" else 200)
+                if p["analysis"]["fc_low"]>p["analysis"]["fc_high"]:
+                    raise ValueError("Koniec zakresu jest niższy niż początek.")
+                p["analysis"]["confirmed"]=search_ok.get()
+                for k,v in system.items():
+                    p["system"][k]=(number(v.get(),k,low=0,high=24000) if v.get().strip() else None) if k.startswith("dirac_") else v.get().strip()
+                p["name"]=project_name.get().strip() or "Mój system"
+                values={k:v.get() for k,v in variables.items()}
+                if any(v.strip() for k,v in values.items() if k!="filter"):
+                    parsed={k:v if k=="filter" else number(v,k) for k,v in values.items()}
+                    if c and all(parsed[k]==c["settings"][k] for k in parsed) and c["console_confirmed"]==confirmed.get():
+                        next(x for x in p["configurations"] if x["key"]==c["key"])["label"]=label.get().strip() or c["label"]
+                    else:
+                        put_config(p,values,label.get(),console_confirmed=confirmed.get(),parent=c["key"] if c else None)
+                if fingerprint(p)!=fingerprint(self.project):
+                    changed(p)
+                self.project=p
+                self.autosave()
+                self.refresh()
+                win.destroy()
+            except ValueError as exc:
+                messagebox.showerror("Ustawienia",str(exc),parent=win)
+        ttk.Button(win,text="Zapisz ustawienia",command=commit).grid(row=1,column=0,sticky="e",padx=12,pady=(0,12))
 
-        self.last_out_dir = out_dir
-        self.last_mode = mode
-        self.run_started_at = time.time()
-        self.last_output_at = self.run_started_at
-        self.last_heartbeat_at = 0.0
-        self.last_file_snapshot = ""
-        self._write_live_header(mode, out_dir, cmd)
+    def mapping(self):
+        if self.job:
+            return
+        source=self.selected_source()
+        if not source:
+            return
+        win=self.dialog("Przypisanie — "+source["name"],"1020x620")
+        win.columnconfigure(0,weight=1)
+        win.rowconfigure(1,weight=1)
+        top=ttk.Frame(win,padding=8)
+        top.grid(row=0,column=0,sticky="ew")
+        top.columnconfigure(1,weight=1)
+        choices={"Nieprzypisane":"",**self.choices()}
+        stage=field(top,0,"Etap sesji",source["stage"],STAGES)
+        preset=field(top,1,"Konfiguracja sesji",next((n for n,k in choices.items() if k==source["configuration"]),"Nieprzypisane"),choices)
+        ttk.Label(top,text="Konfiguracje dodasz w Mój system. Kanał L/R i pozycja mikrofonu to osobne informacje.").grid(row=2,column=0,columnspan=2,sticky="w",pady=4)
+        t=table(win,[("name","Nazwa źródłowa",210),("role","Rola / kanał",115),("mic","Pozycja mikrofonu",150),("preset","Preset",175),("stage","Etap",120)],7)
+        t.grid(row=1,column=0,sticky="nsew",padx=8)
+        drafts=copy.deepcopy(source["traces"])
+        def fill():
+            t.delete(*t.get_children())
+            for i,r in enumerate(drafts):
+                t.insert("","end",iid=str(i),values=(r["name"],r["role"],r["microphone"],self.config_label(r["preset"]),r["stage"]))
+        fill()
+        edit=ttk.Frame(win,padding=8)
+        edit.grid(row=2,column=0,sticky="ew")
+        role,mic,trace_preset,trace_stage=tk.StringVar(value="Nieprzypisany"),tk.StringVar(),tk.StringVar(value="Nieprzypisane"),tk.StringVar(value=source["stage"])
+        for col,var,vals,width in ((0,role,ROLES,17),(1,mic,None,18),(2,trace_preset,choices,29),(3,trace_stage,STAGES,18)):
+            w=ttk.Entry(edit,textvariable=var,width=width) if vals is None else ttk.Combobox(edit,textvariable=var,values=list(vals),state="readonly",width=width)
+            w.grid(row=0,column=col,padx=3)
+        def selected(event=None):
+            ids=t.selection()
+            if ids:
+                r=drafts[int(ids[0])]
+                role.set(r["role"] if r["role"] in ROLES else "Nieprzypisany")
+                mic.set(r["microphone"])
+                trace_stage.set(r["stage"])
+                trace_preset.set(next((n for n,k in choices.items() if k==r["preset"]),"Nieprzypisane"))
+        t.bind("<<TreeviewSelect>>",selected)
+        def apply_one():
+            for i in t.selection():
+                drafts[int(i)].update(role=role.get(),microphone=mic.get().strip(),preset=choices[trace_preset.get()],stage=trace_stage.get())
+            fill()
+        def apply_all():
+            for r in drafts:
+                r.update(microphone=mic.get().strip(),preset=choices[preset.get()],stage=stage.get())
+            fill()
+        ttk.Button(edit,text="Zastosuj",command=apply_one).grid(row=0,column=4,padx=3)
+        ttk.Button(edit,text="Etap sesji, konfiguracja i wpisana pozycja dla wszystkich śladów",command=apply_all).grid(row=1,column=0,columnspan=4,sticky="w",pady=6)
+        checks=ttk.Frame(win,padding=8)
+        checks.grid(row=3,column=0,sticky="ew")
+        raw,same=tk.BooleanVar(value=source["raw_confirmed"]),tk.BooleanVar(value=source["session_confirmed"])
+        ttk.Checkbutton(checks,text="RAW: Dirac / PEQ / zwrotnica OFF, delay 0, polaryzacja OFF, REL 120 Hz, wspólna referencja czasu",variable=raw).grid(row=0,column=0,columnspan=3,sticky="w")
+        ttk.Checkbutton(checks,text="Ten sam tor, głośność główna i pozycja mikrofonu co RAW; zmieniono tylko opisane ustawienia",variable=same).grid(row=1,column=0,columnspan=3,sticky="w")
+        timing=tk.BooleanVar(value=source.get("timing_confirmed",False))
+        ttk.Checkbutton(checks,text="Wspólna metoda timing reference, stały mikrofon w powtórzeniach (faza i czas)",variable=timing).grid(row=2,column=0,columnspan=3,sticky="w")
+        levels={"Nieustalony":"","Bazowy":"raw","Pomiar Dirac":"dirac","Odsłuch":"listening"}
+        level=field(checks,3,"Poziom subów w tej sesji",next(k for k,v in levels.items() if v==source["gain_state"]),levels)
+        def commit():
+            source.update(traces=drafts,stage=stage.get(),configuration=choices[preset.get()],raw_confirmed=raw.get(),session_confirmed=same.get(),timing_confirmed=timing.get(),gain_state=levels[level.get()],mapping_confirmed=True)
+            changed(self.project)
+            self.autosave()
+            self.refresh()
+            win.destroy()
+            self.start("check")
+        ttk.Button(checks,text="Potwierdź przypisanie i sprawdź",command=commit).grid(row=4,column=0,columnspan=3,sticky="e",pady=6)
 
-        self._log("\n" + "=" * 80)
-        self._log("TRYB: " + mode.label)
-        self._log("OUT:  " + str(out_dir))
-        if mode.needs_mdat:
-            source_kind = "REW 5.40 API snapshot" if is_rew_api_snapshot(mdat) else "MDAT offline"
-            self._log("ŹRÓDŁO: " + source_kind + " — " + str(mdat))
-        if mode.needs_bridge and bridge is not None:
-            self._log("GAIN BRIDGE: " + str(bridge))
-        selected_ref = _resolve_user_reference_path(self.user_reference_var.get())
-        self._log("REF SHD 90: " + str(selected_ref) + (" [OK]" if selected_ref.exists() else " [BRAK / zostanie utworzony tylko przy zapisie]"))
-        self._log("LIVE LOG: " + (str(self.live_log_path) if self.live_log_path else "[niedostępny]"))
-        self._log("CMD:  " + " ".join([f'"{c}"' if " " in c else c for c in cmd]))
-        self._log("=" * 80 + "\n")
+    def api_dialog(self):
+        if self.job:
+            return
+        win=self.dialog("Wczytaj z otwartego REW","850x510")
+        win.columnconfigure(0,weight=1)
+        win.rowconfigure(1,weight=1)
+        row=ttk.Frame(win,padding=10)
+        row.grid(row=0,column=0,sticky="ew")
+        url=field(row,0,"REW → Preferences → API → Start", "http://127.0.0.1:4735")
+        ttk.Button(row,text="Połącz",command=lambda:self.start("api_list",{"url":url.get()})).grid(row=0,column=2,padx=5)
+        t=table(win,[("title","Zaznacz pomiary do pobrania",750)],12)
+        t.configure(selectmode="extended")
+        t.grid(row=1,column=0,sticky="nsew",padx=10)
+        self.api={"window":win,"table":t,"measurements":[]}
+        def fetch():
+            data=self.api
+            if data:
+                selected=[data["measurements"][int(i)] for i in t.selection()]
+                if selected:
+                    self.start("api_import",{"url":url.get(),"measurements":selected})
+        ttk.Button(win,text="Wczytaj zaznaczone",command=fetch).grid(row=2,column=0,sticky="e",padx=10,pady=10)
+        def close():
+            self.api=None
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW",close)
 
-        self.status_var.set("Analiza uruchomiona. Czekam na output procesu…")
-        self.elapsed_var.set("00:00")
-        try:
-            self.progress.start(12)
-        except Exception:
-            pass
-        self.run_button.configure(state="disabled")
-        self.stop_button.configure(state="normal")
+    def set_busy(self,busy):
+        for widget in self.busy_widgets:
+            widget.configure(state="disabled" if busy else "readonly" if isinstance(widget,ttk.Combobox) else "normal")
+        self.stop.configure(state="normal" if busy else "disabled")
 
-        t = threading.Thread(target=self._worker, args=(cmd, out_dir, mode), daemon=True)
-        t.start()
-
-    def _worker(self, cmd: List[str], out_dir: Path, mode: Mode) -> None:
-        env = os.environ.copy()
-        env.setdefault("PYTHONIOENCODING", "utf-8")
-        env.setdefault("PYTHONUTF8", "1")
-        env.setdefault("PYTHONUNBUFFERED", "1")
-        try:
-            self.proc = subprocess.Popen(
-                cmd,
-                cwd=str(APP_DIR),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-                bufsize=0,
-                creationflags=_subprocess_creationflags(),
-            )
-            self.log_queue.put(f"[INFO] Proces uruchomiony. PID={self.proc.pid}\n")
-            assert self.proc.stdout is not None
-            for raw_line in iter(self.proc.stdout.readline, b""):
-                self.last_output_at = time.time()
-                self.log_queue.put(_decode_process_output(raw_line))
-            rc = self.proc.wait()
-            self.log_queue.put(f"\n[ZAKOŃCZONO] Kod wyjścia: {rc}\n")
-            if rc == 0 and self.open_after_var.get():
-                self.log_queue.put("[INFO] Otwieram folder wyników.\n")
-                self.after(100, lambda: _open_path(out_dir))
-            elif rc != 0:
-                self.log_queue.put("[BŁĄD] Analiza zakończona błędem. Sprawdź log powyżej.\n")
-        except Exception as exc:
-            self.log_queue.put(f"\n[BŁĄD GUI] {exc}\n")
-        finally:
-            self.proc = None
-            self.after(0, self._process_finished)
-
-    def _process_finished(self) -> None:
-        try:
-            self.progress.stop()
-        except Exception:
-            pass
-        elapsed = ""
-        if self.run_started_at is not None:
-            elapsed = self._fmt_elapsed(time.time() - self.run_started_at)
-        self.status_var.set(f"Zakończono. Czas: {elapsed}.")
-        self.elapsed_var.set(elapsed)
-        self.run_started_at = None
-        self.last_output_at = None
-        self.run_button.configure(state="normal")
-        self.stop_button.configure(state="disabled")
-
-    def _stop(self) -> None:
-        if self.proc is None:
+    def start(self,task,args=None):
+        if self.job:
             return
         try:
-            self.proc.terminate()
-            self._log("[INFO] Wysłano terminate do procesu.")
+            self.autosave()
+            directory=self.path.parent/"przebiegi"/(task+"_"+time.strftime("%Y%m%d_%H%M%S")+"_"+uid()[:6])
+            request={"project":copy.deepcopy(self.project),"out":str(directory),"task":task,"args":args or {}}
+            self.log,self.started,self.stage=[],time.monotonic(),"Rozpoczynanie…"
+            self.set_busy(True)
+            self.export_button.pack_forget()
+            if task in ("standard","custom"):
+                self.design_result=None
+                for row in self.candidates.get_children():
+                    if row!="reference":
+                        self.candidates.delete(row)
+                self.plot(self.design_plot,[],"")
+            self.job=ProcessJob(request,directory)
+            self.job.start()
         except Exception as exc:
-            self._log(f"[BŁĄD] Nie udało się przerwać: {exc}")
+            self.job=None
+            self.set_busy(False)
+            messagebox.showerror("Nie uruchomiono",str(exc),parent=self)
 
-    def _poll_log(self) -> None:
-        try:
+    def poll(self):
+        if self.job:
             while True:
-                line = self.log_queue.get_nowait()
-                self.last_output_at = time.time()
-                self._log(line)
-        except queue.Empty:
-            pass
+                try:
+                    event=self.job.events.get_nowait()
+                except queue.Empty:
+                    break
+                if event["type"]=="stage":
+                    self.stage=event["message"]
+                elif event["type"]=="log":
+                    self.log=(self.log+[event["message"]])[-1500:]
+                elif event["type"]=="done":
+                    result=event["result"] or {"status":"error","message":"Proces nie zwrócił wyniku.","candidates":[]}
+                    result.setdefault("task",self.job.request["task"])
+                    result["directory"]=str(self.job.directory)
+                    self.job=None
+                    self.set_busy(False)
+                    if result["status"]=="ok" and "source" in result:
+                        if not any(s["sha256"]==result["source"]["sha256"] for s in self.project["sources"]):
+                            self.project["sources"].append(result["source"])
+                            changed(self.project)
+                        self.refresh()
+                        self.tabs.select(0)
+                        if self.api:
+                            self.api["window"].destroy()
+                            self.api=None
+                        self.autosave()
+                        self.start("check")
+                        break
+                    if result["status"]=="ok" and "measurements" in result and self.api:
+                        self.api["measurements"]=result["measurements"]
+                        t=self.api["table"]
+                        t.delete(*t.get_children())
+                        for i,m in enumerate(result["measurements"]):
+                            t.insert("","end",iid=str(i),values=(m["title"],))
+                    else:
+                        self.project["runs"].append(result)
+                        if "evidence" in result:
+                            self.project["reference_evidence"]=result["evidence"]
+                        self.latest=result
+                        self.present(result)
+                        self.autosave()
+                    self.stage=result["message"]
+                    break
+            self.status.configure(text=(self.stage[:145]+f" · {int(time.monotonic()-self.started)} s") if self.job else self.stage[:240])
+        self.after(100,self.poll)
 
-        # v20.07: heartbeat independent of child stdout. Ranking may be CPU-bound
-        # and silent for a long time; this proves the GUI has not frozen.
-        if self.proc is not None and self.run_started_at is not None:
-            now = time.time()
-            elapsed = now - self.run_started_at
-            quiet = now - (self.last_output_at or self.run_started_at)
-            self.elapsed_var.set(self._fmt_elapsed(elapsed))
-            self.status_var.set(
-                f"Analiza działa… czas {self._fmt_elapsed(elapsed)}, "
-                f"ostatni output {self._fmt_elapsed(quiet)} temu."
-            )
-            if quiet >= 300 and elapsed >= 300 and ("brak plików wynikowych" in self._snapshot_out_dir() or "plików: 1" in self._snapshot_out_dir()):
-                # v20.07: a ranking with no child stdout and no output files for 5+ minutes is
-                # not a normal "long calculation" anymore; it usually means an EXE/multiprocessing
-                # child is stuck or MDAT import is taking abnormally long.
-                if now - self.last_heartbeat_at >= 5.0:
-                    self.status_var.set("UWAGA: brak postępu >5 min — zalecane Przerwij i uruchom RAW Check albo tryb z workers=1.")
-            if now - self.last_heartbeat_at >= 5.0:
-                snap = self._snapshot_out_dir()
-                # Avoid repeating identical file snapshots every heartbeat; still
-                # print a heartbeat every 15 s even if nothing changed.
-                if snap != self.last_file_snapshot or now - self.last_heartbeat_at >= 15.0:
-                    self._log(
-                        f"[DZIAŁA] {time.strftime('%H:%M:%S')} | "
-                        f"czas {self._fmt_elapsed(elapsed)} | "
-                        f"cisza outputu {self._fmt_elapsed(quiet)} | {snap}"
-                    )
-                    self.last_file_snapshot = snap
-                self.last_heartbeat_at = now
-
-        self.after(200, self._poll_log)
-
-    def _open_last_out(self) -> None:
-        if self.last_out_dir and self.last_out_dir.exists():
-            _open_path(self.last_out_dir)
-        else:
-            out = Path(self.out_var.get())
-            if out.exists():
-                _open_path(out)
+    def present(self,result):
+        task=result.get("task")
+        if task=="check":
+            checks=result.get("checks",{})
+            names={s["id"]:s["name"] for s in self.project["sources"]}
+            text="\n".join(names.get(r["source_id"],"Źródło")+": "+r["message"] for r in checks.get("sources",[]))
+            text+="\nPoziomy: "+checks.get("levels",{}).get("message","Nie sprawdzono.")
+            self.measure_summary.configure(text=text[:920])
+        elif task in ("standard","custom"):
+            self.design_result=result
+            self.design_summary.configure(text=result["message"]+"\n"+result.get("next",""))
+            for row in self.candidates.get_children():
+                if row!="reference":
+                    self.candidates.delete(row)
+            curves=[]
+            ref=result.get("reference_curve")
+            if ref:
+                curves.append(("Odniesienie",ref["frequency"],ref["spl"]))
+            for c in result.get("candidates",[])[:2]:
+                m=c["metrics"]
+                self.candidates.insert("","end",iid=c["id"],values=(c["label"],self.fmt(m["L_sum_gain_delta_db"])+" / "+self.fmt(m["R_sum_gain_delta_db"]),self.fmt(m["body_delta_db"]),c["evidence"]))
+                curves.append((c["label"],c["curve"]["frequency"],c["curve"]["spl"]))
+            self.plot(self.design_plot,curves,"Suma stereo — symulacja w stanie pomiaru Dirac")
+            self.export_button.pack_forget()
+        elif task=="compare":
+            self.compare_result=result
+            if result.get("status")=="ok":
+                labels={key:label for label,key in self.choices().items()}
+                self.a_var.set(labels.get(result["config_a"],""))
+                self.b_var.set(labels.get(result["config_b"],""))
+                self.stage_var.set(result["stage"])
+                note=next((n for n in reversed(self.project["listening"]) if n.get("run_id")==result["run_id"]),None)
+                self.choice.set(note["choice"] if note else "brak wyraźnej różnicy")
+                self.matched.set(note["level_matched"] if note else False)
+                self.note.set(note["note"] if note else "")
+            summaries=result.get("summaries",[])
+            self.compare_summary.configure(text="\n".join(summaries) if summaries else result["message"]+"\n"+result.get("next",""))
+            self.comparison.delete(*self.comparison.get_children())
+            for i,r in enumerate(result.get("rows",[])):
+                self.comparison.insert("","end",iid=str(i),values=(r["position"],r["role"],*[self.fmt(r["delta_db"][k]) for k in ("30–60 Hz","80–110 Hz","100–220 Hz")]))
+            if result.get("rows"):
+                self.comparison.selection_set("0")
+                self.compare_curve()
             else:
-                messagebox.showinfo("Brak wyników", "Nie ma jeszcze folderu wyników.")
-
-    def _open_main_report(self) -> None:
-        mode = self.last_mode or self._selected_mode()
-        out = self.last_out_dir or Path(self.out_var.get())
-        p = guess_main_report(mode, out)
-        if p and p.exists():
-            _open_path(p)
+                self.plot(self.compare_plot,[],"")
+        elif task=="export" and result["status"]=="ok":
+            messagebox.showinfo("Ustawienia do testu",result["message"]+"\n\n"+result["export_dir"],parent=self)
+            folder(result["export_dir"])
         else:
-            messagebox.showinfo("Brak raportu", f"Nie znalazłem głównego raportu w:\n{out}")
+            self.status.configure(text=result["message"])
+
+    def select_candidate(self,event=None):
+        self.export_button.pack_forget()
+        ids=self.candidates.selection()
+        if not ids or not self.design_result:
+            return
+        c=next((c for c in self.design_result.get("candidates",[]) if c["id"]==ids[0]),None)
+        if c:
+            m,s=c["metrics"],c["settings"]
+            self.candidate_note.configure(text=f"Relacja sub−kolumna L/R: {s['l_rel_ms']:.2f} / {s['r_rel_ms']:.2f} ms. Fundament 30–60 Hz Δ {self.fmt(m['foundation_delta_db'])} dB; suma 80–110 Hz Δ {self.fmt(m['stereo_delta_db'])} dB.\nOceń kompromis między stronami i dolną średnicą. Obliczenia nie rozstrzygają naturalności wokalu.")
+            if c["safe"] and result_is_current(self.project,self.design_result) and not self.job:
+                self.export_button.pack(side="left",padx=8)
+        else:
+            self.candidate_note.configure(text="Obecny slot pozostaje odniesieniem. Aplikacja nie zmienia ustawień sprzętu.")
+
+    def compare(self):
+        choices=self.choices()
+        if self.a_var.get() not in choices or self.b_var.get() not in choices:
+            messagebox.showinfo("Porównanie","Dodaj konfiguracje w Mój system i przypisz do nich ślady w Pomiary.",parent=self)
+            return
+        self.project["ui"]["compare_stage"]=self.stage_var.get()
+        self.project["ui"].update(compare_a=choices[self.a_var.get()],compare_b=choices[self.b_var.get()])
+        self.start("compare",{"stage":self.stage_var.get(),"a":choices[self.a_var.get()],"b":choices[self.b_var.get()]})
+
+    def invalidate_comparison(self,event=None):
+        self.compare_result=None
+        self.comparison.delete(*self.comparison.get_children())
+        self.plot(self.compare_plot,[],"")
+        self.compare_summary.configure(text="Zmieniono wybór presetów lub etap. Uruchom porównanie przed zapisaniem odsłuchu.")
+
+    def compare_curve(self,event=None):
+        ids=self.comparison.selection()
+        if ids and self.compare_result and self.compare_result.get("curves"):
+            c=self.compare_result["curves"][int(ids[0])]
+            self.plot(self.compare_plot,[("A",c["frequency"],c["A"]),("B",c["frequency"],c["B"])],f"SPL · {c['role']} · {c['position']} · wspólne osie, bez wyrównania")
+
+    def plot(self,frame,curves,title):
+        for child in frame.winfo_children():
+            child.destroy()
+        if not curves:
+            return
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        fig=Figure(figsize=(8,2.2),dpi=90,layout="constrained")
+        ax=fig.add_subplot(111)
+        for label,freq,spl in curves:
+            ax.semilogx(freq,spl,label=label,linewidth=1.2)
+        ax.set(xlabel="Częstotliwość [Hz]",ylabel="SPL [dB]",title=title)
+        ax.grid(True,alpha=.25)
+        ax.legend(fontsize=8)
+        canvas=FigureCanvasTkAgg(fig,master=frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both",expand=True)
+
+    def export(self):
+        ids=self.candidates.selection()
+        if ids and self.design_result:
+            self.start("export",{"result":self.design_result,"candidate_id":ids[0]})
+
+    def listening(self):
+        r=self.compare_result
+        if not r or r["status"]!="ok" or not result_is_current(self.project,r):
+            messagebox.showinfo("Odsłuch","Najpierw porównaj te konfiguracje; notatka musi mieć ID i etap.",parent=self)
+            return
+        self.project["listening"].append({"a":r["config_a"],"b":r["config_b"],"stage":r["stage"],"choice":self.choice.get(),"level_matched":self.matched.get(),"note":self.note.get().strip(),"author":"użytkownik","created":utc_now(),"run_id":r["run_id"]})
+        self.autosave()
+        self.status.configure(text="Zapisano Twój wybór."+(" Głośność niewyrównana — ograniczona miarodajność." if not self.matched.get() else ""))
+
+    def shown_result(self):
+        return (self.compare_result if self.tabs.index(self.tabs.select())==2 else self.design_result) or self.latest
+
+    def summary(self):
+        from rew_user_report import write_summary
+        r=self.shown_result()
+        if not r:
+            messagebox.showinfo("Podsumowanie","Brak zakończonego wyniku.",parent=self)
+            return
+        path=filedialog.asksaveasfilename(parent=self,initialfile="REWDO_podsumowanie.md",defaultextension=".md",filetypes=[("Raport","*.md")])
+        if path:
+            write_summary(Path(path),self.project,r)
+
+    def details(self):
+        win=tk.Toplevel(self)
+        win.title("Szczegóły techniczne")
+        win.geometry("1000x650")
+        text=tk.Text(win,wrap="word",font=("Consolas",10))
+        text.pack(fill="both",expand=True,padx=10,pady=10)
+        r=copy.deepcopy(self.shown_result() or {})
+        for k in ("curves","reference_curve"):
+            r.pop(k,None)
+        for c in r.get("candidates",[]):
+            c.pop("curve",None)
+        text.insert("end",json.dumps(r,ensure_ascii=False,indent=2)+"\n\n"+"".join(self.log))
+        text.configure(state="disabled")
+        ttk.Button(win,text="Kopiuj szczegóły",command=lambda:(self.clipboard_clear(),self.clipboard_append(text.get("1.0","end")))).pack(side="left",padx=10,pady=6)
+        if r.get("directory"):
+            ttk.Button(win,text="Otwórz folder techniczny",command=lambda:folder(r["directory"])).pack(side="left",padx=4)
+
+    def cancel(self):
+        if self.job:
+            self.stage="Zatrzymywanie obliczeń i procesów potomnych…"
+            self.job.cancel()
+
+    def close(self):
+        if self.job:
+            if messagebox.askyesno("Zamknij","Przerwać obliczenia i zamknąć po zatrzymaniu procesów?",parent=self):
+                self.cancel()
+                def finish():
+                    if self.job:
+                        self.after(150,finish)
+                    else:
+                        self.autosave()
+                        self.destroy()
+                self.after(150,finish)
+            return
+        self.autosave()
+        self.destroy()
 
 
-
-def _crash_log_path() -> Path:
-    """Where to write GUI startup/runtime crash logs.
-
-    In ONEDIR EXE this is next to REWDO_GUI.exe, so the user can find it.
-    """
-    try:
-        return APP_DIR / "REWDO_GUI_CRASH.log"
-    except Exception:
-        try:
-            if getattr(sys, "frozen", False):
-                return Path(sys.executable).resolve().parent / "REWDO_GUI_CRASH.log"
-            return Path.cwd() / "REWDO_GUI_CRASH.log"
-        except Exception:
-            return Path("REWDO_GUI_CRASH.log")
-
-
-def _write_crash_log(exc: BaseException, where: str = "GUI") -> Path:
-    log_path = _crash_log_path()
-    try:
-        lines = [
-            "=" * 78,
-            f"REWDO v20.31 — dziennik błędu — {where}",
-            time.strftime("%Y-%m-%d %H:%M:%S"),
-            f"Python: {sys.version}",
-            f"Executable: {sys.executable}",
-            f"Frozen: {getattr(sys, 'frozen', False)}",
-            f"APP_DIR: {APP_DIR}",
-            "",
-            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
-            "",
-        ]
-        with open(log_path, "a", encoding="utf-8", errors="replace") as f:
-            f.write("\n".join(lines))
-    except Exception:
-        pass
-    return log_path
-
-
-def _show_startup_crash(exc: BaseException, log_path: Path) -> None:
-    """Show a visible error even for --windowed PyInstaller builds."""
-    try:
-        root = tk.Tk()
-        root.withdraw()
-        messagebox.showerror(
-            "REWDO GUI — błąd uruchamiania",
-            "GUI nie wystartowało poprawnie.\n\n"
-            f"Błąd: {exc}\n\n"
-            f"Log zapisany tutaj:\n{log_path}\n\n"
-            "Do diagnostyki użyj START_REWDO_GUI_DIAGNOSTIC.cmd z folderu builda."
-        )
-        root.destroy()
-    except Exception:
-        pass
-
-
-def main() -> int:
-    app = REWDOLauncher()
-    app.mainloop()
+def main():
+    App().mainloop()
     return 0
 
 
-if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except SystemExit:
-        raise
-    except Exception as exc:
-        log_path = _write_crash_log(exc, "startup")
-        _show_startup_crash(exc, log_path)
-        raise
+if __name__=="__main__":
+    raise SystemExit(main())

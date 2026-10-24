@@ -237,6 +237,8 @@ class EvaluationContext:
     global_gain_l_db: float = 0.0
     global_gain_r_db: float = 0.0
     cut_only_enabled: bool = True
+    search_frequencies: Optional[List[float]] = None
+    prepare_import_files: bool = True
 
 
 @dataclass
@@ -736,6 +738,7 @@ def _load_reference_sum(
     fs: float,
     l_rel_ref: float,
     r_rel_ref: float,
+    reference_settings: Optional[Dict[str, object]] = None,
 ) -> Tuple[np.ndarray, str]:
     if reference_mdat is not None and Path(reference_mdat).exists():
         try:
@@ -752,15 +755,17 @@ def _load_reference_sum(
         ref_error = "plik referencyjny nie został wskazany"
 
     lm_raw, rm_raw, ls_raw, rs_raw = raw
-    main = make_sections("HP", fs, 90.0, "BW48")
-    sub = make_sections("LP", fs, 90.0, "BW48")
+    ref_fc = float(reference_settings["fc"]) if reference_settings else 90.0
+    ref_filter = str(reference_settings["filter"]) if reference_settings else "BW48"
+    main = make_sections("HP", fs, ref_fc, ref_filter)
+    sub = make_sections("LP", fs, ref_fc, ref_filter)
     hm = freq_response(main, fs, freq)
     hs = freq_response(sub, fs, freq)
     lm = lm_raw * hm
     rm = rm_raw * hm
     ls = apply_delay_and_polarity(ls_raw * hs, freq, l_rel_ref, False)
     rs = apply_delay_and_polarity(rs_raw * hs, freq, r_rel_ref, False)
-    return lm + rm + ls + rs, f"odtworzona referencja 90 BW48 z RAW; powód braku realnego MDAT: {ref_error}"
+    return lm + rm + ls + rs, f"odtworzona referencja {ref_fc:g} {ref_filter} z RAW; powód braku realnego MDAT: {ref_error}"
 
 
 def _candidate_signature(c: CustomCandidate) -> Tuple[object, ...]:
@@ -851,7 +856,7 @@ def _standard_seed_pool(
     r_center: float,
     progress: Optional[Callable[[str], None]],
 ) -> List[CustomCandidate]:
-    fcs = [82.0, 86.0, 90.0, 94.0, 98.0]
+    fcs = ctx.search_frequencies or [82.0, 86.0, 90.0, 94.0, 98.0]
     delays = [-0.8, -0.4, 0.0, 0.4, 0.8]
     pool: List[CustomCandidate] = []
     total = 0
@@ -1606,7 +1611,7 @@ def _write_variant(
     export_status, export_reason = _export_status(profile, c)
     export_root = vdir / export_status
     export_root.mkdir(parents=True, exist_ok=True)
-    import_allowed = bool(c.candidate_safe_to_export and export_status != "DIAGNOSTYKA_NIE_WGRYWAC")
+    import_allowed = bool(ctx.prepare_import_files and c.candidate_safe_to_export and export_status != "DIAGNOSTYKA_NIE_WGRYWAC")
     if import_allowed:
         write_minidsp_biquads(export_root / "MAIN_C1_CUSTOM_HPF_MINIDSP_BIQUADS.txt", main, c.code, slots=8)
         write_minidsp_biquads(export_root / "SUB_REL_CUSTOM_LPF_MINIDSP_BIQUADS.txt", sub, c.code, slots=8)
@@ -2327,6 +2332,9 @@ def design_acoustic_biquads(
     empirical_calibration_enabled: bool = False,
     delay_refinement_enabled: bool = True,
     progress: Optional[Callable[[str], None]] = None,
+    reference_settings: Optional[Dict[str, object]] = None,
+    search_frequencies: Optional[List[float]] = None,
+    prepare_import_files: bool = True,
 ) -> List[Tuple[str, CustomCandidate]]:
     out_dir.mkdir(parents=True, exist_ok=True)
     write_metric_registry(out_dir)
@@ -2426,6 +2434,7 @@ def design_acoustic_biquads(
         reference_mdat, freq,
         raw=(lm_raw, rm_raw, ls_raw, rs_raw), fs=fs,
         l_rel_ref=l_center, r_rel_ref=r_center,
+        reference_settings=reference_settings,
     )
     empirical = load_empirical_calibration(empirical_calibration_path)
     if not empirical_calibration_enabled:
@@ -2439,6 +2448,8 @@ def design_acoustic_biquads(
         global_gain_l_db=float(project_gain_l),
         global_gain_r_db=float(project_gain_r),
         cut_only_enabled=str(cut_only_mode).lower() == "on",
+        search_frequencies=search_frequencies,
+        prepare_import_files=prepare_import_files,
     )
     write_calibration_summary(empirical, out_dir / "07_KALIBRACJA_REALNYMI_POMIARAMI.md")
     if progress:

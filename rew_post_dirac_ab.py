@@ -648,15 +648,8 @@ def _v20_data_status(r: Dict[str, object]) -> str:
 
 
 def _short_slot_role(r: Dict[str, object], ref: Optional[Dict[str, object]]) -> str:
-    label = (str(r.get("label", "")) + " " + str(r.get("source_names", ""))).lower()
     if ref is not None and r is ref:
-        return "referencja tekstury"
-    if "102" in label:
-        return "kandydat warunkowy"
-    if "100" in label:
-        return "kandydat kompromisowy"
-    if "96" in label or "98" in label:
-        return "kandydat A/B"
+        return "ustawienie odniesienia"
     return "slot testowy"
 
 
@@ -977,24 +970,11 @@ def _load_listening_profile_entries() -> List[Dict[str, str]]:
 
 
 def _apply_listening_profile(r: Dict[str, object], entries: List[Dict[str, str]], ref: Optional[Dict[str, object]]) -> float:
-    text = (str(r.get("label", "")) + " " + str(r.get("source_names", ""))).lower()
+    # v20.32: historical name patterns are not listening evidence or penalties.
+    # Listening choices are stored explicitly against configuration IDs in projects.
     r["listening_profile_status"] = ""
     r["listening_profile_note"] = ""
     r["listening_profile_penalty"] = 0.0
-    for e in entries:
-        m = str(e.get("match", "")).lower().strip()
-        if not m or m not in text:
-            continue
-        r["listening_profile_status"] = e.get("status", "")
-        r["listening_profile_note"] = e.get("note", "")
-        try:
-            pen = float(e.get("penalty", "0") or 0)
-        except Exception:
-            pen = 0.0
-        if ref is not None and r is ref:
-            pen = 0.0
-        r["listening_profile_penalty"] = pen
-        return pen
     return 0.0
 
 

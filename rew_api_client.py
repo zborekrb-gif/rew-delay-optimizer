@@ -837,11 +837,10 @@ def read_snapshot(path: str | Path) -> Dict[str, Any]:
 
 def is_rew_api_snapshot(path: str | Path) -> bool:
     p = Path(path)
-    if not p.is_file() or not p.name.lower().endswith(".rewapi.json"):
+    if not p.is_file() or p.suffix.lower() != ".json":
         return False
     try:
-        with p.open("r", encoding="utf-8") as handle:
-            head = handle.read(512)
-        return SNAPSHOT_FORMAT in head
+        read_snapshot(p)
+        return True
     except Exception:
         return False

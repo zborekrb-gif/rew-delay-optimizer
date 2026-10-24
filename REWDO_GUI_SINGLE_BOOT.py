@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""REWDO v20.31 single-EXE boot.
+"""REWDO v20.32 single-EXE boot.
 
 One executable does both jobs:
   - normal GUI
@@ -19,7 +19,7 @@ import traceback
 from pathlib import Path
 
 
-VERSION = "20.31"
+VERSION = "20.32"
 
 
 def is_frozen() -> bool:
@@ -80,7 +80,9 @@ def configure_std_streams() -> None:
 
 def write_text_log(name: str, text: str) -> None:
     try:
-        p = APP_DIR / name
+        from rew_project import user_dir
+        p = user_dir() / "logs" / name
+        p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a", encoding="utf-8", errors="replace") as f:
             f.write(text)
             if not text.endswith("\n"):
@@ -107,7 +109,9 @@ def write_startup_diag(tag: str = "startup") -> None:
 
 
 def write_crash_log(exc: BaseException, where: str) -> Path:
-    p = APP_DIR / "REWDO_GUI_CRASH.log"
+    from rew_project import user_dir
+    p = user_dir() / "logs" / "REWDO_GUI_CRASH.log"
+    p.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(p, "a", encoding="utf-8", errors="replace") as f:
             f.write("\n" + "=" * 80 + "\n")
@@ -183,7 +187,7 @@ def run_gui() -> int:
             "GUI did not start.\n\n"
             f"Error: {exc}\n\n"
             f"Crash log:\n{p}\n\n"
-            "Run START_REWDO_GUI_DIAGNOSTIC.cmd from the ONEDIR folder."
+            "Przekaz plik diagnostyczny wykonawcy. Nie zmieniono ustawien sprzetu."
         )
         raise
 
@@ -201,6 +205,9 @@ def main() -> int:
         return smoke_test()
     if argv and argv[0] == "--rewdo-cli":
         return run_cli(argv[1:])
+    if argv and argv[0] == "--rewdo-task":
+        from rew_task_runner import main as task_main
+        return task_main(argv[1:])
     return run_gui()
 
 

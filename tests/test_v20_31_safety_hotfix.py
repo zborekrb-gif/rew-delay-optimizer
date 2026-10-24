@@ -299,7 +299,8 @@ def test_synthetic_reference_delay_conflict_5_vs_6_blocks_anchor(tmp_path: Path)
     second.write_text(_reference_yaml(5.0), encoding="utf-8")
     first.write_text(_reference_yaml(5.0), encoding="utf-8")
     ok, status = _reference_registry_status(first)
-    assert ok is True and "Zweryfikowana" in status
+    # v20.32: removing a conflict does not prove a configuration or its sums.
+    assert ok is False
 
 
 def test_cli_maps_no_safe_candidate_to_exit_code_3(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -430,14 +431,9 @@ def test_reference_writer_requires_measurement_identity_for_verified_anchor(tmp_
 
     evidence = tmp_path / "measurement.mdat"
     evidence.write_bytes(b"measurement identity")
-    verified_path = _write_user_reference_yaml(
-        tmp_path / "verified.yaml",
-        l_main=12.0, r_main=12.0, l_sub=4.0, r_sub=6.0,
-        l_pol="OFF", r_pol="OFF", xo=90, filt="BW48", verification_source=evidence,
-    )
-    verified = load_reference_record(verified_path)
-    assert verified.verified is True
-    assert verified.verification_status == "MEASURED"
-    assert verified.verified_by_measurement_sha256 is not None
-    assert verified.verified_at is not None
-    assert verified.anchor_allowed is True
+    # Regression changed deliberately: arbitrary bytes are not measurement proof.
+    with pytest.raises(ValueError):
+        _write_user_reference_yaml(
+            tmp_path / "verified.yaml", l_main=12.0, r_main=12.0, l_sub=4.0, r_sub=6.0,
+            l_pol="OFF", r_pol="OFF", xo=90, filt="BW48", verification_source=evidence,
+        )

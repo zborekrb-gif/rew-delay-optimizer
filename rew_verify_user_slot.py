@@ -84,10 +84,14 @@ def _write_user_reference_yaml(
     filter_val = _filter_label(filt)
     source = Path(verification_source) if verification_source else None
     if source is not None:
+        from rew_mdat import scan_mdat_project
+        if not source.is_file() or source.suffix.lower() not in {".mdat", ".json"}:
+            raise ValueError("Dowodem może być odczytywalny pomiar MDAT/API, nie dowolny plik.")
+        scan_mdat_project(source)  # format check; attaching is NOT verification
         measurement_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
-        verified = True
-        verification_status = "MEASURED"
-        verified_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        verified = False
+        verification_status = "MEASUREMENT_ATTACHED_UNVERIFIED"
+        verified_at = None
     else:
         measurement_sha256 = None
         verified = False
@@ -97,7 +101,7 @@ def _write_user_reference_yaml(
         "# USER_REFERENCE_90BW48.yaml — REWDO v20.31 REFERENCE RECORD",
         "# verified=true wymaga identyfikowalnego pliku pomiarowego podanego przez --verification-source.",
         f"name: {xo_val}_{filter_val}_slot_real",
-        "description: Referencja odsłuchowa — realny slot SHD, pełna/gęsta średnica, pianino i wokale.",
+        "description: Ustawienie wpisane z konsoli; bez automatycznej oceny odsłuchowej.",
         f"crossover_hz: {xo_val}",
         f"filter: {filter_val}",
         f"verified: {'true' if verified else 'false'}",
@@ -110,11 +114,7 @@ def _write_user_reference_yaml(
         f"r_sub_ms: {float(r_sub):.2f}",
         f"l_sub_polarity: {str(l_pol or 'OFF').upper()}",
         f"r_sub_polarity: {str(r_pol or 'OFF').upper()}",
-        "subjective_notes:",
-        "  midrange: najlepsza / pełna / gęsta",
-        "  piano: emocjonalne wykończenie",
-        "  vocals: bliskie, naturalne, bez szklistości",
-        "  bass: nie jest celem samym w sobie",
+        "subjective_notes: null",
         "",
     ]
     p.write_text("\n".join(lines), encoding="utf-8")
@@ -133,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--filter", default=None, help="Opcjonalnie filtr, np. BW48")
     p.add_argument("--ranking-csv", default=None, help="Opcjonalnie RANKING_CROSSOVEROW_RAW.csv")
     p.add_argument("--save-user-reference", default=None, help="Zapisz te wartości jako USER_REFERENCE_90BW48.yaml")
-    p.add_argument("--verification-source", default=None, help="Plik pomiarowy potwierdzający wpis; zapisuje SHA-256, status MEASURED i czas UTC")
+    p.add_argument("--verification-source", default=None, help="Dołącz pomiar; sama tożsamość pliku nie weryfikuje konfiguracji")
     p.add_argument("--out", default="VERIFY_USER_SLOT.md", help="Plik raportu markdown")
     return p
 
@@ -214,7 +214,7 @@ def main(argv=None) -> int:
             "## Zapis referencji",
             "",
             f"Zapisano referencję do: `{saved}`",
-            ("Status: **MEASURED** — zapisano SHA-256 pliku pomiarowego."
+            ("Status: **MEASUREMENT_ATTACHED_UNVERIFIED** — dołączono pomiar; zgodność konfiguracji wymaga kontroli w projekcie."
              if args.verification_source else
              "Status: **USER_ENTERED_UNVERIFIED** — bez pliku pomiarowego wpis nie może być automatycznym anchorem."),
             "",

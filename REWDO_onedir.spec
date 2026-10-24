@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# REWDO v20.31 — Safety Hotfix / aplikacja okienkowa
+# REWDO v20.32 — trzy zadania / aplikacja okienkowa
 #
 # One executable:
 #   REWDO_GUI.exe                  -> GUI
@@ -11,30 +11,10 @@ from PyInstaller.utils.hooks import collect_data_files
 
 datas = []
 for name in [
-    "USER_REFERENCE_90BW48.yaml",
-    "USER_REFERENCE_102BW48.yaml",
-    "USER_LISTENING_PROFILE.yaml",
-    "README.md",
-    "README_GUI_ONEDIR.md",
-    "OPIS_TRYBOW.md",
-    "CHANGELOG.md",
+    "INSTRUKCJA_v20_32.md",
     "METRYKI_I_SKALY.md",
     "METRYKI_I_SKALY.csv",
-    "90_BW48_main30.mdat",
     "USER_EMPIRICAL_CALIBRATION.json",
-    "KALIBRACJA_PREDYKCJA_VS_POMIAR_v20_25a.md",
-    "REW_API_INTEGRATION_v20_26.md",
-    "VALIDATION_v20_26.md",
-    "VALIDATION_v20_26a.md",
-    "TIME_DOMAIN_ANALYSIS_v20_28.md",
-    "VALIDATION_v20_28.md",
-    "MDAT_PHASE_TRUTH_GUARD_v20_29.md",
-    "VALIDATION_v20_29.md",
-    "VALIDATION_v20_29b.md",
-    "VALIDATION_v20_31.md",
-    "AUDYT_NAPRAW_P0_v20_31.md",
-    "KNOWN_LIMITATIONS_v20_31.md",
-    "USER_REFERENCE_SLOT4MAX_90BW48.yaml",
 ]:
     datas.append((name, "."))
 
@@ -44,6 +24,8 @@ except Exception:
     pass
 
 hiddenimports = [
+    "rew_project", "rew_source_binding", "rew_workflow", "rew_process", "rew_task_runner", "rew_user_report",
+    "rew_legacy_launcher", "rew_reference_registry", "matplotlib.backends.backend_tkagg",
     "_tkinter",
     "tkinter",
     "tkinter.constants",

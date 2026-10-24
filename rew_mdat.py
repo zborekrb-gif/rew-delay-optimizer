@@ -165,6 +165,13 @@ def _snapshot_measurement_records(path: str | Path) -> Tuple[Dict[str, object], 
             "summary": summary,
             "record": raw_record,
         })
+    from rew_source_binding import binding
+    bound = binding(path)
+    if bound is not None:
+        mapping = {int(t["position"]): t for t in bound["traces"]}
+        for record in records:
+            record["role"] = mapping.get(record["index"], {}).get("role", "Nieprzypisany")
+            record["name"] = f"trace_{record['index']}"
     return payload, records
 
 
@@ -355,6 +362,8 @@ def scan_mdat_project(path: str | Path) -> Dict[str, object]:
             )
         )
 
+    from rew_source_binding import map_infos
+    measurements = map_infos(p, measurements)
     profile_cross, profile_filter, profile_slope = infer_mdat_profile_from_names([m.name for m in measurements])
     required = ["L main", "L sub", "R main", "R sub"]
     found_roles = {m.role for m in measurements}

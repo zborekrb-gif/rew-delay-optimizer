@@ -52,16 +52,29 @@ class ReferenceRecord:
     verification_status: str
     verified_by_measurement_sha256: Optional[str]
     verified_at: Optional[str]
+    configuration_id: Optional[str] = None
+    configuration_version: int = 1
+    verification_scope: str = ""
+    configuration_digest: str = ""
 
     @property
     def anchor_allowed(self) -> bool:
         status = self.verification_status.upper()
         return bool(
             self.verified
-            and status in {"MEASURED", "USER_CONFIRMED"}
+            and status == "MEASURED"
             and self.verified_by_measurement_sha256
             and self.verified_at
+            and self.configuration_id
+            and self.verification_scope == "CONSOLE_AND_RELATIVE_SUM"
+            and self.configuration_digest == self.settings_digest
         )
+
+    @property
+    def settings_digest(self) -> str:
+        from rew_project import digest
+        return digest([self.configuration_id, self.configuration_version, self.crossover_hz, self.filter_name,
+                       self.l_main_ms, self.r_main_ms, self.l_sub_ms, self.r_sub_ms])
 
     @property
     def relative_delays_ms(self) -> tuple[float, float]:
@@ -96,6 +109,10 @@ def load_reference_record(path: str | Path) -> ReferenceRecord:
         verification_status=str(fields.get("verification_status") or "UNVERIFIED"),
         verified_by_measurement_sha256=sha_text,
         verified_at=str(verified_at) if verified_at is not None else None,
+        configuration_id=str(fields["configuration_id"]) if fields.get("configuration_id") else None,
+        configuration_version=int(fields.get("configuration_version") or 1),
+        verification_scope=str(fields.get("verification_scope") or ""),
+        configuration_digest=str(fields.get("configuration_digest") or ""),
     )
 
 
@@ -118,6 +135,9 @@ def find_reference_conflicts(paths: Iterable[str | Path], *, tolerance_ms: float
     fields = ("l_main_ms", "r_main_ms", "l_sub_ms", "r_sub_ms")
     for index, first in enumerate(records):
         for second in records[index + 1:]:
+            if first.configuration_id and second.configuration_id:
+                if (first.configuration_id, first.configuration_version) != (second.configuration_id, second.configuration_version):
+                    continue
             if abs(first.crossover_hz - second.crossover_hz) > 0.51 or first.filter_name != second.filter_name:
                 continue
             differing = tuple(
@@ -139,4 +159,3 @@ def reference_relative_delays(
     if conflicts or not record.anchor_allowed:
         return None
     return record.relative_delays_ms
-

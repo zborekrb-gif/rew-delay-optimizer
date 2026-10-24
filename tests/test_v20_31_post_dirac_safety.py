@@ -180,8 +180,8 @@ def test_short_decision_helpers_expose_risks_and_data_status() -> None:
         "ryzyko_dziury_lp_po_dirac_0_100": 70.0, "odpornosc_3pkt_l_mlp_p_0_100": 40.0,
         "listening_comfort_0_100": 30.0,
     }
-    assert _short_slot_role(ref, ref) == "referencja tekstury"
-    assert _short_slot_role(candidate, ref) == "kandydat warunkowy"
+    assert _short_slot_role(ref, ref) == "ustawienie odniesienia"
+    assert _short_slot_role(candidate, ref) == "slot testowy"
     assert _short_slot_decision(candidate, ref) == "A/B tylko ostrożnie"
     assert "chudsza" in _short_main_risk(candidate)
     assert _v20_data_status(candidate) == "POMIAR CZĘŚCIOWY"

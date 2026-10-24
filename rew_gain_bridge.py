@@ -58,6 +58,10 @@ class GainBridgeAudit:
 
 
 def _records(path: Path, required_roles: set[str]) -> List[_MdatNumericRecord]:
+    from rew_api_client import is_rew_api_snapshot
+    if is_rew_api_snapshot(path):
+        from rew_workflow import numeric_records
+        return numeric_records(path)
     data = path.read_bytes()
     scan = scan_mdat_project(path)
     infos = list(scan.get("measurements", []))
