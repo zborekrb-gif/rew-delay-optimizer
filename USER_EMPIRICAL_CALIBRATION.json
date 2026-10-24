@@ -1,0 +1,34 @@
+{
+  "schema_version": 2,
+  "enabled": false,
+  "system_name": "Empty public distribution template",
+  "calibration_weight": 0.5,
+  "custom_biquad_records": [],
+  "custom_biquad": {
+    "validation_state_count": 0,
+    "independent_topology_count": 0,
+    "side_bias_l": 0.0,
+    "side_bias_r": 0.0,
+    "side_sigma_l": 0.0,
+    "side_sigma_r": 0.0,
+    "technical_bias": 0.0,
+    "technical_sigma": 0.0
+  },
+  "standard_bw48": {
+    "validation_state_count": 0,
+    "independent_topology_count": 0,
+    "warning_only": true,
+    "side_bias_l": 0.0,
+    "side_bias_r": 0.0
+  },
+  "delay_refinement": {
+    "enabled": true,
+    "coarse_radius_ms": 1.2,
+    "coarse_step_ms": 0.1,
+    "fine_radius_ms": 0.2,
+    "fine_step_ms": 0.05,
+    "max_iterations": 6,
+    "improvement_epsilon": 0.02
+  },
+  "notes": "Empty distribution model. No measured or listening data are included."
+}

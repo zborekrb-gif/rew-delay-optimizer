@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "enabled": false,
+  "system_name": "SYNTHETIC TEST DATA",
+  "calibration_weight": 0.5,
+  "custom_biquad_records": [
+    {
+      "topology_id": "SYNTHETIC_A",
+      "state_id": "SYNTHETIC_STATE_1",
+      "candidate_code": "SYNTHETIC_CANDIDATE",
+      "bias_side_l": -1.0,
+      "bias_side_r": -3.0,
+      "bias_technical": -1.0
+    },
+    {
+      "topology_id": "SYNTHETIC_A",
+      "state_id": "SYNTHETIC_STATE_2",
+      "candidate_code": "SYNTHETIC_CANDIDATE",
+      "bias_side_l": -3.0,
+      "bias_side_r": -5.0,
+      "bias_technical": -2.0
+    }
+  ],
+  "custom_biquad": {
+    "validation_state_count": 2,
+    "independent_topology_count": 1,
+    "side_bias_l": -2.0,
+    "side_bias_r": -4.0,
+    "side_sigma_l": 1.4142135623730951,
+    "side_sigma_r": 1.4142135623730951,
+    "technical_bias": -1.5,
+    "technical_sigma": 0.7071067811865476
+  },
+  "standard_bw48": {
+    "validation_state_count": 0,
+    "independent_topology_count": 0,
+    "warning_only": true,
+    "side_bias_l": 0.0,
+    "side_bias_r": 0.0
+  },
+  "delay_refinement": {
+    "enabled": true,
+    "coarse_radius_ms": 1.2,
+    "coarse_step_ms": 0.1,
+    "fine_radius_ms": 0.2,
+    "fine_step_ms": 0.05,
+    "max_iterations": 6,
+    "improvement_epsilon": 0.02
+  },
+  "notes": "Empty distribution model. No measured or listening data are included."
+}
