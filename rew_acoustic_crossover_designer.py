@@ -1543,7 +1543,7 @@ def write_reports(out_dir: Path, selected: List[AcousticCandidate], all_rows: Li
         "- **Ciągłość korpusu 100–220 Hz — SYMULACJA PROJEKTU**: lokalna ocena ciągłości niższej średnicy; nie jest skalą Podparcia dolnej średnicy z rankingu RAW.",
         "- **Symulowane ryzyko dziury L+P — SYMULACJA PROJEKTU**: mniej znaczy lepiej; nie jest rzeczywistym pomiarem po Dirac.",
         "- **Symulowane obciążenie korekcji Dirac — SYMULACJA PROJEKTU**: mniej znaczy lepiej; skala jest wspólna z trybem 9, lecz nie z predykcją RAW.",
-        "- **Dodatkowy gain XO**: korekta lokalna ponad stan bazowy zapisany w `DESIGN_GAIN_STATE.md`. W trybie `suggested` i `fixed` będzie 0/0.",
+        "- **Dodatkowa korekta poziomu zwrotnicy**: zmiana względem poziomu zapisanego w `DESIGN_GAIN_STATE.md`. W trybie `suggested` i `fixed` będzie 0/0.",
         "- **Mismatch XO**: informacja, o ile suby musiałyby zostać skorygowane względem mainów wokół XO. Jeśli dochodzi do limitu, to sygnał do analizy, ale nie automatyczny nakaz ściszenia całego basu.",
         "- **Strategia basu**: rozdziela zapas 25–60 Hz od lokalnej dominacji przy efektywnym XO. Ciągłość 125–220 Hz pochodzi z całkowitej sumy.",
         "- **Sub 25–60 / niedopasowanie poziomu przy XO / suma korpusu**: pierwsza wartość to przewaga subów nad mainami w 25–60 Hz; druga to lokalna różnica magnitudy przy efektywnym XO; trzecia opisuje ciągłość pełnej sumy 125–220 względem 75–125 Hz. Tylko pierwsze dwie są relacją sub/main.",

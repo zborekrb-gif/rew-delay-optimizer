@@ -2833,7 +2833,7 @@ def write_crossover_ranking_reports(
     lines = [
         "RANKING ZWROTNIC SHD Z JEDNEGO POMIARU RAW — v20.31 UJEDNOLICONE METRYKI",
         "",
-        f"Plik bazowy: {Path(mdat_path).name}",
+        f"Plik użyty do obliczeń: {Path(mdat_path).name}",
         f"Analizowane profile filtrów SHD: {', '.join(profile_labels) if profile_labels else 'brak'}",
         f"Tryb polaryzacji: {'DIAGNOSTYCZNY — OFF/OFF + INV/OFF + OFF/INV + INV/INV' if bool(polarity_scan) else 'standardowy — tylko OFF/OFF'}",
         f"Zakres crossoverów: {int(crossover_min_hz)}–{int(crossover_max_hz)} Hz co {int(crossover_step_hz)} Hz dla każdego profilu",
@@ -3179,7 +3179,7 @@ def write_crossover_ranking_reports(
                 f"Najlepszy wariant wypadł na {boundary} granicy skanu ({best.crossover_hz} Hz). Rozszerz zakres w tym kierunku przed uznaniem wyniku za finalny."
             )
     _write_slot_plan_and_rew_checklist(rows, out, best=best, ref=ref, glow_best=glow_best, scene_best=scene_best, locked_ref=locked_ref)
-    lines.extend(["", "PROCEDURA DECYZJI A/B — v20.23:", "- Gotowe ustawienia do wpisania w SHD zapisano jako `SLOT_PLAN_DO_SHD.md`.", "- RAW ranking wskazuje sloty testowe, nie finalną zmianę referencji 90 BW48.", "- Checklisty pomiarów zapisano jako `POMIARY_PRE_DIRAC_DO_ZROBIENIA.md` oraz `POMIARY_POST_DIRAC_DO_ZROBIENIA.md`. Stary plik `POMIARY_DO_ZROBIENIA.md` jest tylko indeksem.", "", "KONTROLA POMIARU RAW:", "- Dodatkowy raport kontroli pomiaru bazowego zapisano jako `RAW_MEASUREMENT_CHECK.md` w tym folderze wynikowym.", "- Dla nowych pomiarów RAW zalecany jest sweep 20 Hz–20 kHz, minimum 15 Hz–8 kHz, żeby aplikacja mogła później oceniać korpusu/obecności/blasku."])
+    lines.extend(["", "PROCEDURA DECYZJI A/B — v20.23:", "- Gotowe ustawienia do wpisania w SHD zapisano jako `SLOT_PLAN_DO_SHD.md`.", "- RAW ranking wskazuje sloty testowe, nie finalną zmianę referencji 90 BW48.", "- Checklisty pomiarów zapisano jako `POMIARY_PRE_DIRAC_DO_ZROBIENIA.md` oraz `POMIARY_POST_DIRAC_DO_ZROBIENIA.md`. Stary plik `POMIARY_DO_ZROBIENIA.md` jest tylko indeksem.", "", "KONTROLA POMIARU RAW:", "- Dodatkowy raport kontroli pomiarów bez zwrotnicy DSP zapisano jako `RAW_MEASUREMENT_CHECK.md` w tym folderze wynikowym.", "- Dla nowych pomiarów RAW zalecany jest sweep 20 Hz–20 kHz, minimum 15 Hz–8 kHz, żeby aplikacja mogła później oceniać korpusu/obecności/blasku."])
     if warnings:
         lines.extend(["", "UWAGI DO PLIKU RAW:"])
         lines.extend([f"- {w}" for w in warnings])
@@ -3345,7 +3345,7 @@ def rank_raw_crossover_profiles(
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Ranking crossoverów SHD z jednego pliku RAW .mdat — v20.31 ujednolicone metryki")
-    p.add_argument("--mdat", required=True, help="Bazowy RAW z pliku .mdat albo migawki .rewapi.json, z wyłączonym crossoverem SHD")
+    p.add_argument("--mdat", required=True, help="Pomiary bez zwrotnicy DSP (RAW) z pliku .mdat albo migawki .rewapi.json, z wyłączonym crossoverem SHD")
     p.add_argument("--out", default="ranking_crossovers_RAW", help="Folder raportu")
     p.add_argument("--profiles", default="BW48,LR48", help="Profile do wspólnego rankingu, np. BW48,LR48 albo BW24,BW48,LR24,LR48")
     p.add_argument("--filter-type", default=None, choices=["BW", "LR"], help="Tryb zgodności wstecznej: pojedynczy typ filtra; użyj razem z --slope")

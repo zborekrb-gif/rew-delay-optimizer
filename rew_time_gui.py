@@ -108,7 +108,7 @@ class TimeAnalysisWindow(tk.Toplevel):
             'Dla B wystarczy po jednym; kolejne pomiary B będą agregowane medianą.\n\n'
             '2. Wczytaj te pomiary przez „Z otwartego REW”. Program pobierze SPL, fazę, group delay i impuls. '
             'MDAT nadal służy do porównania SPL; ta ścieżka pełnej analizy czasu wymaga migawki API.\n\n'
-            '3. W „Opisz pomiary” przypisz każdemu śladowi A albo B, właściwą sumę L/R/L+R, etap i miejsce kapsuły. '
+            '3. W „Opisz pomiary” przypisz każdemu pomiarowi A albo B, właściwą sumę L/R/L+R, etap i miejsce mikrofonu. '
             'Nazwy pomiarów nie muszą mieć specjalnego formatu.\n\n'
             '4. Wybierz plik i miejsce powyżej, potwierdź warunki i oblicz analizę. '
             'Różne miejsca mikrofonu sprawdzaj osobno. Wynik nie zmienia ustawień sprzętu ani nie zastępuje odsłuchu.')

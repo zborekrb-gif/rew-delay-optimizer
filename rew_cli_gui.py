@@ -458,9 +458,9 @@ def run_self_test(args: Optional[argparse.Namespace] = None) -> int:
     # v19.44: test parsera nazw RAW. REL120 opisuje stały crossover REL-a,
     # a nie bazowy delay subwoofera.
     if abs(infer_base_delay_from_filename("L_SUB_RAW_REL120") - 0.0) > 1e-12:
-        errors.append("Parser bazowego delayu błędnie odczytuje REL120 jako delay.")
+        errors.append("Odczyt opóźnienia z nazwy pomiaru błędnie odczytuje REL120 jako delay.")
     if abs(infer_base_delay_from_filename("90_BW48_L_sub_5.6") - 5.6) > 1e-12:
-        errors.append("Parser bazowego delayu nie rozpoznaje jawnego L_sub_5.6.")
+        errors.append("Odczyt opóźnienia z nazwy pomiaru nie rozpoznaje jawnego L_sub_5.6.")
 
     # v19.44: test matematyczny transmitancji crossovera RAW.
     test_fc = 90.0
@@ -601,7 +601,7 @@ def run_self_test(args: Optional[argparse.Namespace] = None) -> int:
         "- Raport walidatora `FAST_2_STAGE_VALIDATION.md`.\n",
         "- Raport wydajności `PERFORMANCE_DIAGNOSTICS.md`.\n",
         "- SMART RESCAN działa w tle i zapisuje `SMART_RESCAN.md` wtedy, gdy walidator wykryje ryzyko.\n",
-        "- Parser RAW nie myli opisu `REL120` z bazowym delayem 120 ms.\n",
+        "- Parser RAW nie myli opisu `REL120` z opóźnieniem 120 ms ustawionym podczas pomiaru.\n",
         "- Matematyka filtrów RAW: BW24/BW48 oraz LR24/LR48, w tym płaska suma Linkwitz-Riley.\n",
         "- Mapowanie relatywnego delayu sub - main na cztery wartości SHD z limitem 30 ms i wspólnym delayem mainów.\n",
         "- Obsługa fizycznej bazy MDAT, w tym parser nazwy `main30` i równoważne mapowanie main30/sub0 → main11.4/sub1.2/0.\n",
@@ -635,10 +635,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--auto-detect-profile", action="store_true", help="Autowykryj crossover/filtr/slope z nazw plików")
     p.add_argument("--slope", default="48", choices=SLOPE_OPTIONS, help="Stromość filtra: 24 albo 48 dB/oct")
     p.add_argument("--score-profile", default="PBIS", choices=SCORE_PROFILES, help="Profil oceny: Technical, Balanced, Psychoacoustic albo PBIS")
-    p.add_argument("--l-main-base-delay", type=float, default=0.0, help="Bazowy fizyczny delay L_main aktywny podczas pomiaru wejściowego")
-    p.add_argument("--r-main-base-delay", type=float, default=0.0, help="Bazowy fizyczny delay R_main aktywny podczas pomiaru wejściowego")
-    p.add_argument("--l-base-delay", type=float, default=0.0, help="Bazowy fizyczny delay L_sub aktywny podczas pomiaru wejściowego, np. 1.0 dla L_sub_1.0.txt")
-    p.add_argument("--r-base-delay", type=float, default=0.0, help="Bazowy fizyczny delay R_sub aktywny podczas pomiaru wejściowego, np. 4.0 dla R_sub_4.0.txt")
+    p.add_argument("--l-main-base-delay", type=float, default=0.0, help="Opóźnienie lewej kolumny ustawione podczas pomiaru")
+    p.add_argument("--r-main-base-delay", type=float, default=0.0, help="Opóźnienie prawej kolumny ustawione podczas pomiaru")
+    p.add_argument("--l-base-delay", type=float, default=0.0, help="Opóźnienie lewego subwoofera ustawione podczas pomiaru, np. 1.0 dla L_sub_1.0.txt")
+    p.add_argument("--r-base-delay", type=float, default=0.0, help="Opóźnienie prawego subwoofera ustawione podczas pomiaru, np. 4.0 dla R_sub_4.0.txt")
     p.add_argument("--delay-min", type=float, default=0.0)
     p.add_argument("--delay-max", type=float, default=30.0)
     p.add_argument("--delay-step", type=float, default=0.1)
@@ -1438,14 +1438,14 @@ def run_gui() -> None:
         command=lambda: autodetect_profile_from_loaded_files(log_result=True),
     ).grid(row=2, column=3, columnspan=2, sticky="w", padx=6, pady=4)
 
-    ttk.Label(cfg_box, text="Bazowy L_main w MDAT [ms]").grid(row=3, column=0, sticky="w", padx=6, pady=4)
+    ttk.Label(cfg_box, text="L kolumna — opóźnienie podczas pomiaru [ms]", wraplength=220).grid(row=3, column=0, sticky="w", padx=6, pady=4)
     ttk.Entry(cfg_box, textvariable=cfg_vars["l_main_base_delay"], width=10).grid(row=3, column=1, sticky="w", padx=6, pady=4)
-    ttk.Label(cfg_box, text="Bazowy R_main w MDAT [ms]").grid(row=3, column=2, sticky="w", padx=(14, 6), pady=4)
+    ttk.Label(cfg_box, text="R kolumna — opóźnienie podczas pomiaru [ms]", wraplength=220).grid(row=3, column=2, sticky="w", padx=(14, 6), pady=4)
     ttk.Entry(cfg_box, textvariable=cfg_vars["r_main_base_delay"], width=10).grid(row=3, column=3, sticky="w", padx=6, pady=4)
 
-    ttk.Label(cfg_box, text="Bazowy L_sub w MDAT [ms]").grid(row=4, column=0, sticky="w", padx=6, pady=4)
+    ttk.Label(cfg_box, text="L subwoofer — opóźnienie podczas pomiaru [ms]", wraplength=220).grid(row=4, column=0, sticky="w", padx=6, pady=4)
     ttk.Entry(cfg_box, textvariable=cfg_vars["l_base_delay"], width=10).grid(row=4, column=1, sticky="w", padx=6, pady=4)
-    ttk.Label(cfg_box, text="Bazowy R_sub w MDAT [ms]").grid(row=4, column=2, sticky="w", padx=(14, 6), pady=4)
+    ttk.Label(cfg_box, text="R subwoofer — opóźnienie podczas pomiaru [ms]", wraplength=220).grid(row=4, column=2, sticky="w", padx=(14, 6), pady=4)
     ttk.Entry(cfg_box, textvariable=cfg_vars["r_base_delay"], width=10).grid(row=4, column=3, sticky="w", padx=6, pady=4)
 
     compact_fields = [

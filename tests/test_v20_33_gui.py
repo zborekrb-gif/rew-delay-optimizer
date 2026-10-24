@@ -84,7 +84,7 @@ def test_mapping_saves_current_editor_without_extra_apply(app,monkeypatch):
     monkeypatch.setattr(app,"start",lambda *args:None)
     app.mapping("test");app.update()
     dialog=next(w for w in app.winfo_children() if isinstance(w,tk.Toplevel))
-    label=next(w for w in descendants(dialog) if isinstance(w,ttk.Label) and w.cget("text")=="Gdzie stała kapsuła?")
+    label=next(w for w in descendants(dialog) if isinstance(w,ttk.Label) and w.cget("text")=="Gdzie stał mikrofon?")
     mic=next(w for w in label.master.winfo_children() if isinstance(w,ttk.Entry) and not isinstance(w,ttk.Combobox))
     mic.insert(0,"MLP")
     button=next(w for w in descendants(dialog) if isinstance(w,ttk.Button) and w.cget("text")=="Potwierdź przypisanie i sprawdź")
@@ -92,6 +92,36 @@ def test_mapping_saves_current_editor_without_extra_apply(app,monkeypatch):
     button.invoke();app.update()
     assert source["traces"][0]["microphone"]=="MLP"
     assert source["traces"][0]["role"]=="L sum"
+
+
+def test_readable_stage_labels_preserve_existing_project_and_worker_keys(app,monkeypatch):
+    from rew_workflow import _source
+    cfg=put_measurement_preset(app.project,"Ustawienie do próby")
+    source={"id":"old","name":"Przykładowe pomiary.mdat","stage":"Bazowe",
+        "configuration":cfg["key"],"raw_confirmed":False,"session_confirmed":False,
+        "timing_confirmed":False,"gain_state":"raw","mapping_confirmed":False,
+        "traces":[{"name":name,"role":role,"microphone":"","preset":cfg["key"],"stage":"Bazowe"}
+                  for name,role in (("Lewa strona","L sum"),("Prawa strona","R sum"))]}
+    app.project["sources"].append(source)
+    app.refresh()
+    assert all(app.traces.item(row,"values")[-1]=="Bez zwrotnicy DSP" for row in app.traces.get_children())
+    monkeypatch.setattr(app,"start",lambda *args:None)
+    app.mapping("old");app.update()
+    dialog=next(w for w in app.winfo_children() if isinstance(w,tk.Toplevel))
+    stage_boxes=[w for w in descendants(dialog) if isinstance(w,ttk.Combobox) and "Bez zwrotnicy DSP" in w["values"]]
+    assert len(stage_boxes)==2 and all(w.get()=="Bez zwrotnicy DSP" for w in stage_boxes)
+    label=next(w for w in descendants(dialog) if isinstance(w,ttk.Label) and w.cget("text")=="Gdzie stał mikrofon?")
+    mic=next(w for w in label.master.winfo_children() if isinstance(w,ttk.Entry) and not isinstance(w,ttk.Combobox))
+    mic.insert(0,"Główne miejsce odsłuchu")
+    next(w for w in descendants(dialog) if isinstance(w,ttk.Button) and w.cget("text")=="Użyj etapu, ustawienia i miejsca dla wszystkich pomiarów").invoke()
+    assert_buttons_visible(dialog)
+    next(w for w in descendants(dialog) if isinstance(w,ttk.Button) and w.cget("text")=="Potwierdź przypisanie i sprawdź").invoke()
+    app.update()
+    assert source["stage"]=="Bazowe" and source["gain_state"]=="raw"
+    assert [t["stage"] for t in source["traces"]]==["Bazowe","Bazowe"]
+    assert [t["role"] for t in source["traces"]]==["L sum","R sum"]
+    assert all(t["microphone"]=="Główne miejsce odsłuchu" for t in source["traces"])
+    assert _source(app.project,"Bazowe") is source
 
 
 def test_check_exposes_entire_problem_without_log(app):

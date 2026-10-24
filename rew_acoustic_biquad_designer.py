@@ -883,7 +883,7 @@ def _standard_seed_pool(
                             pass
                         done += 1
                         if progress and done % max(1, total // 8) == 0:
-                            progress(f"skan bazowych BW/LR: {done}/{total}")
+                            progress(f"Sprawdzanie standardowych filtrów BW/LR: {done}/{total}")
     return pool
 
 
@@ -987,7 +987,7 @@ def search_custom_filters(
     settings = SEARCH_LEVELS[level]
     standard = _standard_seed_pool(ctx, l_center, r_center, progress)
     if not standard:
-        raise ValueError("Nie znaleziono bezpiecznej bazowej zwrotnicy BW48/LR48. Sprawdź RAW i delaye referencji.")
+        raise ValueError("Żadna standardowa zwrotnica BW48/LR48 nie spełniła warunków bezpieczeństwa. Sprawdź pomiary bez zwrotnicy DSP i opóźnienia ustawienia odniesienia.")
     baseline = max(standard, key=lambda c: c.nominal_scores["REFERENCE_SAFE"])
 
     seed_parents: List[CustomCandidate] = []
@@ -1679,7 +1679,7 @@ def _write_variant(
     if import_allowed:
         install_text = (
             f"1. Pliki do importu znajdują się wyłącznie w folderze `{export_status}`.\n"
-            f"2. Test bazowy bez all-pass: użyj `{export_status}/ALLPASS_OFF`.\n"
+            f"2. Test bez filtra all-pass: użyj `{export_status}/ALLPASS_OFF`.\n"
             "3. Wyłącz standardowy crossover z listy i nie kaskaduj go z filtrem customowym.\n"
             "4. Ustaw podane opóźnienia i polaryzację OFF/OFF.\n"
             "5. Wykonaj pomiar REW przed Dirac, następnie nowy Dirac i pomiar po Dirac.\n"
@@ -1728,7 +1728,7 @@ Polaryzacja: **OFF/OFF**.
 
 ## All-pass OFF/ON
 
-{("- Tryb all-pass nie był uruchomiony. Folder `ALLPASS_OFF` jest ustawieniem bazowym." if allpass is None else ("- Nie znaleziono bezpiecznego all-pass przechodzącego bramki. Pozostaw `ALLPASS_OFF`." if not allpass.l_spec.enabled and not allpass.r_spec.enabled else f"- L sub: **{allpass.l_spec.label()}**; R sub: **{allpass.r_spec.label()}**.\n- Zmiana wyniku odpornego: **{allpass.score_delta:+.2f} pkt**.\n- Status: **{'ZALECANY DO TESTU A/B' if allpass.recommended else 'WARUNKOWY/TESTOWY — OFF DOMYŚLNY'}**.\n- Powód: {allpass.reason}\n- {('Włączanie: wklej pełne pliki z `ALLPASS_ON`; wyłączanie: przywróć `ALLPASS_OFF`.' if allpass.recommended else 'Wariant został odrzucony i zapisany tylko w `ALLPASS_ODRZUCONY_DIAGNOSTYKA_NIE_WGRYWAC`; użyj `ALLPASS_OFF`.')} Opóźnienia pozostają identyczne."))}
+{("- Tryb all-pass nie był uruchomiony. Folder `ALLPASS_OFF` zawiera wariant bez filtra all-pass." if allpass is None else ("- Nie znaleziono bezpiecznego all-pass przechodzącego bramki. Pozostaw `ALLPASS_OFF`." if not allpass.l_spec.enabled and not allpass.r_spec.enabled else f"- L sub: **{allpass.l_spec.label()}**; R sub: **{allpass.r_spec.label()}**.\n- Zmiana wyniku odpornego: **{allpass.score_delta:+.2f} pkt**.\n- Status: **{'ZALECANY DO TESTU A/B' if allpass.recommended else 'WARUNKOWY/TESTOWY — OFF DOMYŚLNY'}**.\n- Powód: {allpass.reason}\n- {('Włączanie: wklej pełne pliki z `ALLPASS_ON`; wyłączanie: przywróć `ALLPASS_OFF`.' if allpass.recommended else 'Wariant został odrzucony i zapisany tylko w `ALLPASS_ODRZUCONY_DIAGNOSTYKA_NIE_WGRYWAC`; użyj `ALLPASS_OFF`.')} Opóźnienia pozostają identyczne."))}
 
 ## Kalibracja realnymi pomiarami
 
@@ -2113,7 +2113,7 @@ def write_reports(
     table = [
         "# 02 — Trzy profile niestandardowego crossovera",
         "",
-        "| Profil | Kod | Integracja bazowa → po kalibracji | Tonalność profilu | Wynik nominalny bazowy → po kalibracji | Odporność P20 | Wynik końcowy | XO | Faza main–sub L/R | Sklejenie L/R bazowe → po kalibracji | Suma L+P | Korpus | Impuls | Ref. 90 | Głównie tłumienie | Obciążenie Dirac |",
+        "| Profil | Kod | Integracja przed kalibracją → po kalibracji | Tonalność profilu | Wynik nominalny przed kalibracją → po kalibracji | Odporność P20 | Wynik końcowy | XO | Faza main–sub L/R | Zgodność L/R przed kalibracją → po kalibracji | Suma L+P | Korpus | Impuls | Ref. 90 | Głównie tłumienie | Obciążenie Dirac |",
         "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for profile, c in selected:

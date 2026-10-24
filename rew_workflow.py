@@ -17,6 +17,7 @@ import numpy as np
 from rew_project import (active_config, atomic_json, common_gains, digest, file_path, fingerprint,
                          number, sha256, uid, utc_now, verify_sources)
 from rew_source_binding import bound_sources
+from rew_guidance import stage_label
 
 
 def numeric_records(path):
@@ -44,7 +45,7 @@ def numeric_records(path):
         if warnings:
             raise ValueError("Niepełny odczyt MDAT: " + "; ".join(warnings[:4]) + " Wczytaj migawkę z otwartego REW.")
     if not records:
-        raise ValueError("Nie znaleziono obsługiwanych śladów. Wczytaj pomiary z otwartego REW, aby nadać role bez zmiany nazw.")
+        raise ValueError("Nie znaleziono obsługiwanych pomiarów. Wczytaj pomiary z otwartego REW, aby nadać role bez zmiany nazw.")
     for record in records:
         # SPL-only capability still validates magnitudes and its own axis.
         if not record.phase_candidates:
@@ -91,16 +92,16 @@ def import_source(path):
 def _source(project, stage):
     sources = [s for s in project["sources"] if s["stage"] == stage]
     if len(sources) != 1:
-        raise ValueError(f"Wybierz jedną sesję „{stage}” w Pomiary (obecnie: {len(sources)}). Pozostałym przypisz inny etap lub pozostaw jako historię.")
+        raise ValueError(f"W zakładce Pomiary przypisz dokładnie jeden plik do etapu „{stage_label(stage)}” (obecnie: {len(sources)}). Odłącz niepotrzebne pliki od projektu albo popraw etap, jeśli został błędnie opisany.")
     s = sources[0]
     if not s["mapping_confirmed"]:
-        raise ValueError(f"Potwierdź przypisanie śladów w {s['name']}.")
+        raise ValueError(f"Potwierdź przypisanie pomiarów w {s['name']}.")
     used = [t for t in s["traces"] if t["role"] != "Nieprzypisany"]
     positions = {t["microphone"].strip() for t in used}
     if not used or "" in positions or len(positions) != 1:
         raise ValueError(f"{s['name']}: projektowanie wymaga jednej jawnie opisanej pozycji mikrofonu. Kanał L/R nie jest pozycją mikrofonu.")
     if any(t["stage"] != stage for t in used):
-        raise ValueError(f"{s['name']}: ślady mają różne etapy. Popraw przypisanie sesji.")
+        raise ValueError(f"{s['name']}: pomiary mają różne etapy. Popraw przypisanie sesji.")
     return s
 
 
@@ -136,7 +137,7 @@ def check_measurements(project):
             raw, bridge = _source(project, "Bazowe"), _source(project, "Zmiana poziomu")
             verify_sources(project)
             if raw["gain_state"] != "raw" or bridge["gain_state"] != "listening":
-                raise ValueError("Przypisz sesji bazowej poziom Bazowy, a sesji zmiany poziomu — Odsłuch.")
+                raise ValueError("Dla pomiarów bez zwrotnicy wybierz poziom „Pomiar bez zwrotnicy DSP”, a dla kontroli zmiany poziomu — „Odsłuch”.")
             if {t["microphone"] for t in raw["traces"] if t["role"]!="Nieprzypisany"} != {t["microphone"] for t in bridge["traces"] if t["role"]!="Nieprzypisany"}:
                 raise ValueError("Pomiary poziomów mają różne pozycje mikrofonu.")
             if not raw["session_confirmed"] or not bridge["session_confirmed"]:
@@ -159,7 +160,7 @@ def _raw_and_gain(project):
     raw = _source(project, "Bazowe")
     bridge = _source(project, "Zmiana poziomu")
     if raw["gain_state"] != "raw" or bridge["gain_state"] != "listening":
-        raise ValueError("W Pomiary przypisz sesji bazowej poziom Bazowy, a sesji zmiany poziomu — Odsłuch.")
+        raise ValueError("W zakładce Pomiary wybierz poziom „Pomiar bez zwrotnicy DSP” dla pomiarów bez zwrotnicy, a „Odsłuch” dla kontroli zmiany poziomu.")
     if not raw["raw_confirmed"] or not raw["session_confirmed"] or not bridge["session_confirmed"]:
         raise ValueError("W Pomiary potwierdź warunki RAW i zgodność sesji przy drugim poziomie.")
     if {t["microphone"] for t in raw["traces"] if t["role"] != "Nieprzypisany"} != {t["microphone"] for t in bridge["traces"] if t["role"] != "Nieprzypisany"}:
@@ -214,7 +215,7 @@ def verify_reference(project):
             raise ValueError("Wczytaj pomiar odniesienia przed Dirac i przypisz go do aktywnej wersji konfiguracji. Potrzebne są MAIN, SUB i SUM osobno dla L i R.")
         source = sources[0]
         if any(t["preset"] != c["key"] or t["stage"] != "Przed Dirac" for t in source["traces"] if t["role"] != "Nieprzypisany"):
-            raise ValueError("Pomiar odniesienia zawiera ślady innej konfiguracji lub etapu. Popraw ich przypisanie.")
+            raise ValueError("W pliku ustawienia odniesienia są pomiary innego ustawienia lub z innego etapu. Popraw ich opis w Pomiary → Opisz pomiary.")
         if not source["session_confirmed"] or source["gain_state"] not in ("raw", "dirac", "listening"):
             raise ValueError("W Pomiary wskaż poziom sesji odniesienia oraz potwierdź ten sam tor, głośność i pozycję co RAW.")
         raw_source = _source(project, "Bazowe")
@@ -396,7 +397,7 @@ def compare(project, stage, config_a, config_b):
             if key not in groups or t["stage"] != stage:
                 continue
             if not t["microphone"].strip():
-                raise ValueError("Wpisz pozycję mikrofonu w przypisaniu śladów; nie można założyć jej z kanału L/R.")
+                raise ValueError("Wpisz pozycję mikrofonu w przypisaniu pomiarów; nie można założyć jej z kanału L/R.")
             if t["role"] not in {"L sum", "R sum", "L+R"}:
                 continue
             record = records.get(t["position"])
@@ -404,7 +405,7 @@ def compare(project, stage, config_a, config_b):
                 groups[key].setdefault((t["microphone"], t["role"]), []).append(record)
     matched = sorted(set(groups[config_a]) & set(groups[config_b]))
     if not matched:
-        raise ValueError("Brak par sum A/B dla tego samego kanału, etapu i pozycji mikrofonu. Popraw przypisanie śladów w Pomiary.")
+        raise ValueError("Brak par sum A/B dla tego samego kanału, etapu i pozycji mikrofonu. Popraw przypisanie pomiarów w Pomiary.")
     rows, curves = [], []
     for key in matched:
         ra, rb = groups[config_a][key], groups[config_b][key]
@@ -519,7 +520,7 @@ def run_task(project, out, task, args=None, emit=print):
             REWApiClient(args["url"]).create_snapshot([REWApiMeasurement(**m) for m in args["measurements"]], path, include_group_delay=True, include_impulse=True)
             result.update(status="ok", message="Pobrano pomiary z REW.", source=import_source(path), next="Przypisz role, konfiguracje i pozycje mikrofonu.")
         elif task == "check":
-            result.update(status="ok", message="Kontrola zakończona. Zobacz dostępne czynności i ewentualne braki.", checks=check_measurements(project), next="Potwierdź przypisanie śladów i ustawienie odniesienia.")
+            result.update(status="ok", message="Kontrola zakończona. Zobacz dostępne czynności i ewentualne braki.", checks=check_measurements(project), next="Potwierdź przypisanie pomiarów i ustawienie odniesienia.")
         elif task == "verify":
             evidence = verify_reference(project)
             result.update(status="ok", message=evidence["message"], evidence=evidence, next="Znajdź ustawienia do sprawdzenia.")

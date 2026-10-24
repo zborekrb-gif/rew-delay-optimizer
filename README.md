@@ -20,7 +20,7 @@ Na Linux Tcl/Tk musi być dostępny w użytej instalacji Pythona.
 ## Przebieg pracy
 
 1. Wczytaj pomiary z MDAT albo lokalnego API REW.
-2. Potwierdź role, konfiguracje, etap i pozycję mikrofonu.
+2. Opisz, co grało w każdym pomiarze, które ustawienie sprawdzano i gdzie stał mikrofon. Wskaż, czy pomiar wykonano bez zwrotnicy DSP, przed Dirac czy po Dirac.
 3. Sprawdź dane i poziomy przed projektowaniem zwrotnicy.
 4. Porównaj A/B. W `Porównanie i odsłuch → Po Dirac → Pełne porównanie…` dostępne są metryki po Dirac, kontrola sumy stereo i opcjonalna analiza czasu.
 5. Przeczytaj `Co zrobić teraz`, wykonaj potrzebny pomiar i zapisz własny wybór odsłuchowy.

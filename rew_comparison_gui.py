@@ -50,8 +50,8 @@ class ComparisonWindow(TimeAnalysisWindow):
         self.only_time.grid(row=6,column=0,sticky='e')
         help_frame=next(c for c in first.winfo_children() if c.grid_info().get('row')==5)
         help_widget=next(c for c in help_frame.winfo_children() if isinstance(c,tk.Text))
-        set_text(help_widget,'1. Wybierz plik i miejsce kapsuły. Przypisania konfiguracji A/B, etapu i ról pochodzą z projektu.\n\n'
-            '2. Wskaż konkretne L, R i L+R dla A i B. Pojedynczy dostępny ślad jest wybierany automatycznie; przy kilku wybierz właściwy. '
+        set_text(help_widget,'1. Wybierz plik i miejsce mikrofonu. Przypisania konfiguracji A/B, etapu i ról pochodzą z projektu.\n\n'
+            '2. Wskaż konkretne L, R i L+R dla A i B. Pojedynczy dostępny pomiar jest wybierany automatycznie; przy kilku wybierz właściwy. '
             'Te sześć pomiarów tworzy porównanie pasm i zgodności sumy stereo.\n\n'
             '3. Potwierdź rzeczywiste warunki serii. Bez potwierdzonej referencji czasowej program pokaże tylko dostępne SPL i wskaże brak.\n\n'
             '4. Analiza czasu jest opcjonalna i korzysta ze wszystkich przypisanych powtórzeń A/B w tym samym pliku i miejscu. '
@@ -126,7 +126,7 @@ class ComparisonWindow(TimeAnalysisWindow):
         if not source:note='Wybierz jeden plik z pomiarami A i B po Dirac.'
         elif not source.get('mapping_confirmed'):note='Najpierw potwierdź przypisania w Pomiary → Opisz pomiary.'
         elif not position:note='Wybierz jedno miejsce mikrofonu. Różnych pozycji nie łączymy w powtórzenia.'
-        elif not complete:note='Wybierz sześć konkretnych pomiarów L/R/L+R. Przy kilku śladach w jednej roli program czeka na Twój wybór.'
+        elif not complete:note='Wybierz sześć konkretnych pomiarów L/R/L+R. Przy kilku pomiarach w jednej roli program czeka na Twój wybór.'
         elif not self.confirmations['conditions_consistent'].get():note='Potwierdź wspólny tor i głośność główną oraz opisane zmiany A/B.'
         else:note='Możesz uruchomić porównanie. Program oddzieli dostępne pomiary od obszarów, których nie da się ocenić.'
         self.input_note.configure(text=note);self.verdict.configure(text='Wybierz pomiary — wynik poprzedniego wyboru jest nieaktualny.')

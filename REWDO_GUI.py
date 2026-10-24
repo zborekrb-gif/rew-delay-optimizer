@@ -13,7 +13,7 @@ from tkinter import ttk, filedialog, messagebox
 from rew_project import (STAGES, STEPS, ROLES, active_config, changed, fingerprint, load_project,
     new_project, number, put_config, put_measurement_preset, relocate, result_is_current, save_project, uid, user_dir, utc_now)
 from rew_process import ProcessJob
-from rew_guidance import ROLE_LABELS, plan, next_step, help_text, current_run
+from rew_guidance import ROLE_LABELS, STAGE_LABELS, stage_label, stage_value, plan, next_step, help_text, current_run
 
 from rew_app_metadata import APP_VERSION
 
@@ -195,7 +195,7 @@ class App(tk.Tk):
         for name,fn in (("Opisz pomiary",self.mapping),("Wskaż przeniesiony plik",self.locate),("Sprawdź pomiary",lambda:self.start("check"))):
             self.button(row,name,fn).pack(side="left",padx=5)
         self.button(row,"Odłącz plik",self.detach_source).pack(side="left",padx=5)
-        self.traces=table(p,[("source","Plik",145),("name","Nazwa w REW",180),("config","Ustawienie",125),("element","Co grało",170),("channel","Kanał",60),("mic","Miejsce mikrofonu",115),("stage","Etap",105)],5)
+        self.traces=table(p,[("source","Plik",145),("name","Nazwa w REW",180),("config","Ustawienie",125),("element","Co grało",170),("channel","Kanał",60),("mic","Miejsce mikrofonu",160),("stage","Etap pomiaru",175)],5)
         self.traces.grid(row=2,column=0,sticky="nsew")
         p.rowconfigure(2,weight=2)
         self.traces.bind("<Double-1>",lambda e:self.mapping())
@@ -512,7 +512,7 @@ class App(tk.Tk):
                 parts=t["role"].split()
                 channel=parts[0] if parts[0] in ("L","R","L+R") else "nieustalony"
                 element={"main":"Kolumna","sub":"Subwoofer","sum":"Suma"}.get(parts[-1],"Suma stereo" if channel=="L+R" else "nieustalony")
-                self.traces.insert("","end",iid=f"{s['id']}:{i}",values=(s["name"][:30],t["name"],self.config_label(t["preset"] or s["configuration"]),element,channel,t["microphone"] or "nieustalona",t["stage"]))
+                self.traces.insert("","end",iid=f"{s['id']}:{i}",values=(s["name"][:30],t["name"],self.config_label(t["preset"] or s["configuration"]),element,channel,t["microphone"] or "nieustalona",stage_label(t["stage"])))
         choices=self.choices()
         for combo in self.compare_combos:
             combo["values"]=list(choices)
@@ -553,7 +553,7 @@ class App(tk.Tk):
     def selected_source(self):
         ids=self.traces.selection()
         if not ids:
-            messagebox.showinfo("Pomiary","Zaznacz ślad źródła.",parent=self)
+            messagebox.showinfo("Pomiary","Zaznacz pomiar w tabeli w zakładce Pomiary.",parent=self)
             return None
         return next(s for s in self.project["sources"] if s["id"]==ids[0].split(":")[0])
 
@@ -652,13 +652,13 @@ class App(tk.Tk):
             self.autosave()
             self.refresh()
             win.destroy()
-        ttk.Button(ref,text="Dodaj tylko nazwę presetu do porównania (bez delayów)",command=measurement_preset).grid(row=11,column=0,columnspan=2,sticky="w",pady=8)
+        ttk.Button(ref,text="Dodaj nazwę ustawienia do porównania (bez opóźnień)",command=measurement_preset).grid(row=11,column=0,columnspan=2,sticky="w",pady=8)
         gains={}
         panel=panels[1]
         ttk.Label(panel,text="Cyfrowy poziom subów w miniDSP — nie pokrętło REL ani głośność główna.",wraplength=690).grid(row=0,column=0,columnspan=4,pady=(0,10),sticky="w")
         for col,title in enumerate(("Kiedy","L [dB]","R [dB]","Źródło: konsola, data, sesja")):
             ttk.Label(panel,text=title).grid(row=1,column=col,padx=5,sticky="w")
-        for row,(key,title) in enumerate((("raw","Pomiar bazowy"),("dirac","Pomiar Dirac"),("listening","Odsłuch")),2):
+        for row,(key,title) in enumerate((("raw","Pomiar bez zwrotnicy DSP"),("dirac","Pomiar Dirac"),("listening","Odsłuch")),2):
             ttk.Label(panel,text=title).grid(row=row,column=0,padx=5,pady=8,sticky="w")
             gains[key]={}
             for col,f in enumerate(("L","R","origin"),1):
@@ -716,26 +716,26 @@ class App(tk.Tk):
         top.grid(row=0,column=0,sticky="ew")
         top.columnconfigure(1,weight=1)
         choices={"Nieprzypisane":"",**self.choices()}
-        stage=field(top,0,"Etap sesji",source["stage"],STAGES)
-        preset=field(top,1,"Konfiguracja sesji",next((n for n,k in choices.items() if k==source["configuration"]),"Nieprzypisane"),choices)
-        ttk.Label(top,text="Wybierz etap i ustawienie całej sesji. Niżej wybierz ślad i opisz, co grało.\nMiejsce mikrofonu, np. MLP, opisuje położenie kapsuły; kanał L/R — grającą stronę.",wraplength=750).grid(row=2,column=0,columnspan=2,sticky="w",pady=4)
-        t=table(win,[("name","Nazwa źródłowa",220),("role","Co grało",225),("mic","Miejsce mikrofonu",130),("preset","Ustawienie",190),("stage","Etap",125)],6)
+        stage=field(top,0,"Kiedy wykonano pomiary?",stage_label(source["stage"]),STAGE_LABELS.values())
+        preset=field(top,1,"Ustawienie dla całego pliku",next((n for n,k in choices.items() if k==source["configuration"]),"Nieprzypisane"),choices)
+        ttk.Label(top,text="Wybierz etap i ustawienie całej sesji. Niżej wybierz pomiar i opisz, co grało.\nWpisz położenie mikrofonu, np. główne miejsce odsłuchu (MLP). Kanał L/R oznacza lewą lub prawą stronę systemu.",wraplength=750).grid(row=2,column=0,columnspan=2,sticky="w",pady=4)
+        t=table(win,[("name","Nazwa w REW",205),("role","Co grało",225),("mic","Miejsce mikrofonu",190),("preset","Ustawienie",175),("stage","Etap pomiaru",175)],6)
         t.grid(row=1,column=0,sticky="nsew",padx=8)
         drafts=copy.deepcopy(source["traces"])
         def fill():
             selection=t.selection()
             t.delete(*t.get_children())
             for i,r in enumerate(drafts):
-                t.insert("","end",iid=str(i),values=(r["name"],ROLE_LABELS.get(r["role"],r["role"]),r["microphone"],self.config_label(r["preset"]),r["stage"]))
+                t.insert("","end",iid=str(i),values=(r["name"],ROLE_LABELS.get(r["role"],r["role"]),r["microphone"],self.config_label(r["preset"]),stage_label(r["stage"])))
             if selection:
                 t.selection_set(selection)
         fill()
         edit=ttk.Frame(win,padding=8)
         edit.grid(row=2,column=0,sticky="ew")
-        role,mic,trace_preset,trace_stage=tk.StringVar(value=ROLE_LABELS["Nieprzypisany"]),tk.StringVar(),tk.StringVar(value="Nieprzypisane"),tk.StringVar(value=source["stage"])
-        for col,caption in enumerate(("Co grało w tym śladzie?","Gdzie stała kapsuła?","Które ustawienie?","Kiedy zmierzono?")):
+        role,mic,trace_preset,trace_stage=tk.StringVar(value=ROLE_LABELS["Nieprzypisany"]),tk.StringVar(),tk.StringVar(value="Nieprzypisane"),tk.StringVar(value=stage_label(source["stage"]))
+        for col,caption in enumerate(("Co grało podczas pomiaru?","Gdzie stał mikrofon?","Które ustawienie?","Kiedy zmierzono?")):
             ttk.Label(edit,text=caption).grid(row=0,column=col,sticky="w",padx=3)
-        for col,var,vals,width in ((0,role,ROLE_LABELS.values(),26),(1,mic,None,17),(2,trace_preset,choices,26),(3,trace_stage,STAGES,16)):
+        for col,var,vals,width in ((0,role,ROLE_LABELS.values(),26),(1,mic,None,22),(2,trace_preset,choices,26),(3,trace_stage,STAGE_LABELS.values(),23)):
             w=ttk.Entry(edit,textvariable=var,width=width) if vals is None else ttk.Combobox(edit,textvariable=var,values=list(vals),state="readonly",width=width)
             w.grid(row=1,column=col,padx=3)
         def selected(event=None):
@@ -744,32 +744,32 @@ class App(tk.Tk):
                 r=drafts[int(ids[0])]
                 role.set(ROLE_LABELS.get(r["role"],ROLE_LABELS["Nieprzypisany"]))
                 mic.set(r["microphone"])
-                trace_stage.set(r["stage"])
+                trace_stage.set(stage_label(r["stage"]))
                 trace_preset.set(next((n for n,k in choices.items() if k==r["preset"]),"Nieprzypisane"))
         t.bind("<<TreeviewSelect>>",selected)
         def apply_one():
             for i in t.selection():
-                drafts[int(i)].update(role=next(k for k,v in ROLE_LABELS.items() if v==role.get()),microphone=mic.get().strip(),preset=choices[trace_preset.get()],stage=trace_stage.get())
+                drafts[int(i)].update(role=next(k for k,v in ROLE_LABELS.items() if v==role.get()),microphone=mic.get().strip(),preset=choices[trace_preset.get()],stage=stage_value(trace_stage.get()))
             fill()
         def apply_all():
             for r in drafts:
-                r.update(microphone=mic.get().strip(),preset=choices[preset.get()],stage=stage.get())
+                r.update(microphone=mic.get().strip(),preset=choices[preset.get()],stage=stage_value(stage.get()))
             fill()
             selected()
-        ttk.Button(edit,text="Zastosuj do śladu",command=apply_one).grid(row=1,column=4,padx=3)
-        ttk.Button(edit,text="Etap sesji, ustawienie i wpisane miejsce dla wszystkich",command=apply_all).grid(row=2,column=0,columnspan=4,sticky="w",pady=6)
+        ttk.Button(edit,text="Zastosuj do pomiaru",command=apply_one).grid(row=2,column=0,sticky="w",padx=3,pady=6)
+        ttk.Button(edit,text="Użyj etapu, ustawienia i miejsca dla wszystkich pomiarów",command=apply_all).grid(row=2,column=1,columnspan=3,sticky="w",pady=6)
         checks=ttk.Frame(win,padding=8)
         checks.grid(row=3,column=0,sticky="ew")
         raw,same=tk.BooleanVar(value=source["raw_confirmed"]),tk.BooleanVar(value=source["session_confirmed"])
-        ttk.Checkbutton(checks,text="RAW: Dirac / PEQ / zwrotnica OFF, delay 0, polaryzacja OFF, REL 120 Hz, wspólna referencja czasu",variable=raw).grid(row=0,column=0,columnspan=3,sticky="w")
-        ttk.Checkbutton(checks,text="Ten sam tor, głośność główna i pozycja mikrofonu co RAW; zmieniono tylko opisane ustawienia",variable=same).grid(row=1,column=0,columnspan=3,sticky="w")
+        ttk.Checkbutton(checks,text="Wyłączono Dirac, PEQ i zwrotnicę w miniDSP; opóźnienia 0 ms, polaryzacja OFF.\nREL 120 Hz. W REW użyto wspólnego sygnału odniesienia czasu.",variable=raw).grid(row=0,column=0,columnspan=3,sticky="w")
+        ttk.Checkbutton(checks,text="Te same urządzenia, głośność główna i miejsce mikrofonu co przy pomiarach bez zwrotnicy; zmieniono tylko opisane ustawienia",variable=same).grid(row=1,column=0,columnspan=3,sticky="w")
         timing=tk.BooleanVar(value=source.get("timing_confirmed",False))
-        ttk.Checkbutton(checks,text="Wspólna metoda timing reference, stały mikrofon w powtórzeniach (faza i czas)",variable=timing).grid(row=2,column=0,columnspan=3,sticky="w")
-        levels={"Nieustalony":"","Bazowy":"raw","Pomiar Dirac":"dirac","Odsłuch":"listening"}
+        ttk.Checkbutton(checks,text="Ten sam sposób wyznaczania czasu w REW; mikrofon nie zmieniał miejsca między powtórzeniami",variable=timing).grid(row=2,column=0,columnspan=3,sticky="w")
+        levels={"Nie ustalono":"","Pomiar bez zwrotnicy DSP":"raw","Pomiar Dirac":"dirac","Odsłuch":"listening"}
         level=field(checks,3,"Poziom subów w tej sesji",next(k for k,v in levels.items() if v==source["gain_state"]),levels)
         def commit():
             apply_one()
-            source.update(traces=drafts,stage=stage.get(),configuration=choices[preset.get()],raw_confirmed=raw.get(),session_confirmed=same.get(),timing_confirmed=timing.get(),gain_state=levels[level.get()],mapping_confirmed=True)
+            source.update(traces=drafts,stage=stage_value(stage.get()),configuration=choices[preset.get()],raw_confirmed=raw.get(),session_confirmed=same.get(),timing_confirmed=timing.get(),gain_state=levels[level.get()],mapping_confirmed=True)
             changed(self.project)
             self.autosave()
             self.refresh()
@@ -974,7 +974,7 @@ class App(tk.Tk):
     def compare(self):
         choices=self.choices()
         if self.a_var.get() not in choices or self.b_var.get() not in choices:
-            messagebox.showinfo("Porównanie","Dodaj konfiguracje w Mój system i przypisz do nich ślady w Pomiary.",parent=self)
+            messagebox.showinfo("Porównanie","Dodaj konfiguracje w Mój system i przypisz do nich pomiary w Pomiary.",parent=self)
             return
         self.project["ui"]["compare_stage"]=self.stage_var.get()
         self.project["ui"].update(compare_a=choices[self.a_var.get()],compare_b=choices[self.b_var.get()])
@@ -993,7 +993,7 @@ class App(tk.Tk):
         choices=self.choices()
         a,b=choices.get(self.a_var.get()),choices.get(self.b_var.get())
         if not a or not b or a==b:
-            messagebox.showinfo("Czas i powtarzalność","Wybierz dwa różne ustawienia A i B nad tabelą. A będzie odniesieniem. Nazwy dodasz przyciskiem „Dodaj nazwę ustawienia”, a ślady przypiszesz przez Pomiary → Opisz pomiary.",parent=self)
+            messagebox.showinfo("Czas i powtarzalność","Wybierz dwa różne ustawienia A i B nad tabelą. A będzie odniesieniem. Nazwy dodasz przyciskiem „Dodaj nazwę ustawienia”, a pomiary przypiszesz przez Pomiary → Opisz pomiary.",parent=self)
             return
         from rew_time_gui import TimeAnalysisWindow
         if self.time_window and self.time_window.winfo_exists():

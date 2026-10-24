@@ -1,7 +1,24 @@
 """User guidance from explicit project state. This module grants no DSP permissions."""
 from __future__ import annotations
 from dataclasses import dataclass, asdict
-from rew_project import active_config, common_gains, fingerprint, result_is_current
+from rew_project import STAGES, active_config, common_gains, fingerprint, result_is_current
+
+# The saved project format keeps its existing stage identifiers.
+STAGE_LABELS = {stage: stage for stage in STAGES}
+STAGE_LABELS.update({"Nieustalony": "Nie ustalono", "Bazowe": "Bez zwrotnicy DSP"})
+
+
+def stage_label(value):
+    return STAGE_LABELS.get(value, value)
+
+
+def stage_value(label):
+    if label in STAGES:
+        return label
+    for value, display in STAGE_LABELS.items():
+        if label == display:
+            return value
+    raise ValueError("Wybierz etap pomiarów z listy.")
 
 ROLE_LABELS = {
     "Nieprzypisany": "Nie ustalono",
@@ -55,7 +72,7 @@ def plan(project):
             "system_reference", "Wpisz obecne ustawienie"))
     if not sources:
         steps.append(Step("sources", "2. Wczytaj pomiary" if goal == "design" else "1. Wczytaj pomiary A i B", "todo",
-            "Wybierz istniejący MDAT. Jeśli dopiero mierzysz, otwórz plan — podaje potrzebne ślady i warunki sesji.",
+            "Wybierz istniejący MDAT. Jeśli dopiero mierzysz, otwórz plan — podaje potrzebne pomiary i warunki sesji.",
             "import", "Wczytaj plik REW"))
     else:
         unassigned = next((s for s in sources if not _assigned(s)), None)
@@ -69,7 +86,7 @@ def plan(project):
         raw = [s for s in sources if s["stage"] == "Bazowe"]
         bridge = [s for s in sources if s["stage"] == "Zmiana poziomu"]
         ref = [s for s in sources if s["stage"] == "Przed Dirac" and s["configuration"] == project["active_configuration"]]
-        missing = [label for found, label in ((raw, "pomiary bazowe"), (bridge, "pomiar zmiany poziomu"), (ref, "obecne ustawienie przed Dirac")) if not found]
+        missing = [label for found, label in ((raw, "pomiary bez zwrotnicy DSP"), (bridge, "pomiar zmiany poziomu"), (ref, "obecne ustawienie przed Dirac")) if not found]
         steps.append(Step("sessions", "3. Uzupełnij potrzebne sesje", "todo" if missing else "done",
             "Brakuje: " + ", ".join(missing) + ". Plan wyjaśnia każdą sesję." if missing else
             "Sesje są dołączone; teraz sprawdź ich zgodność.", "import", "Wczytaj brakujący pomiar"))
@@ -95,7 +112,7 @@ def plan(project):
         steps.append(Step("verify", "6. Potwierdź punkt odniesienia", "done" if verified else "todo",
             "Obliczenia odtwarzają pomiar odniesienia w sprawdzonym zakresie." if verified else
             verify.get("message","Brakuje dowodu pomiarowego.") if verify else
-            "Porównaj ustawienia z konsoli z rzeczywistym pomiarem przed Dirac. To chroni przed projektowaniem na błędnej bazie.",
+            "Porównaj ustawienia z konsoli z rzeczywistym pomiarem przed Dirac. To chroni przed projektowaniem na niezgodnych danych pomiarowych.",
             "verify_help" if verify and not verified else "verify", "Jak poprawić odniesienie?" if verify and not verified else "Sprawdź obecne ustawienie"))
         prerequisites = all(s.state == "done" for s in steps)
         has_design = bool(design and design.get("status") == "ok" and design.get("candidates"))
@@ -144,19 +161,19 @@ HELP = {
     "Własna zwrotnica może być wynikiem projektu; obecny model odniesienia obsługuje wskazane standardowe rodziny. Gotowe pomiary możesz porównać niezależnie."]),
  "sources": ("Jak opisać plik pomiarowy", [
     "Wczytaj MDAT, a potem wybierz Opisz pomiary. Oryginalnego pliku nie zmieniamy.",
-    "Etap Bazowe oznacza pomiary pojedynczych urządzeń bez zwrotnicy DSP; Przed Dirac to pomiar gotowej zwrotnicy z korekcją wyłączoną; Po Dirac — z korekcją włączoną.",
-    "Miejsce mikrofonu opisuje kapsułę, np. MLP — środek między uszami. L/R określa grający kanał, a nie przesunięcie mikrofonu.",
-    "Zaznacz ślad i wybierz: lewa/prawa kolumna, subwoofer, para lub cały system. Jeżeli plik ma jedną sesję i pozycję, zastosuj etap, ustawienie i pozycję do wszystkich.",
-    "Jeśli nazwy nie wystarczają, sprawdź ślady w REW. Nierozpoznany ślad może pozostać nieprzypisany. Nie potwierdzaj warunków, których nie znasz."]),
+    "Wybierz „Bez zwrotnicy DSP” dla pomiarów kolumn i subwooferów z wyłączonym podziałem w miniDSP. „Przed Dirac” oznacza pomiar gotowej zwrotnicy z wyłączoną korekcją, a „Po Dirac” — z włączoną.",
+    "Wpisz, gdzie stał mikrofon. MLP oznacza główne miejsce odsłuchu, między uszami słuchacza. L/R określa grający kanał, a nie przesunięcie mikrofonu.",
+    "Zaznacz pomiar i wybierz: lewa/prawa kolumna, subwoofer, para lub cały system. Jeżeli plik ma jedną sesję i pozycję, zastosuj etap, ustawienie i pozycję do wszystkich.",
+    "Jeśli nazwy nie wystarczają, sprawdź pomiary w REW. Nierozpoznany pomiar może pozostać nieprzypisany. Nie potwierdzaj warunków, których nie znasz."]),
  "sessions": ("Trzy sesje potrzebne do projektowania", [
-    "Bazowe: Dirac OFF, PEQ OFF, HP/LP w miniDSP OFF, delay 0 ms, polaryzacja OFF. REL 120 Hz. Nie zmieniaj pokręteł, mikrofonu, toru ani głośności w serii. Użyj wspólnej akustycznej referencji czasu w REW.",
+    "Bez zwrotnicy DSP (RAW): wyłącz Dirac, PEQ i filtry podziału w miniDSP. Ustaw opóźnienia na 0 ms, a odwrócenie polaryzacji na OFF. REL 120 Hz. Nie zmieniaj pokręteł, mikrofonu, toru ani głośności w serii. Użyj wspólnej akustycznej referencji czasu w REW.",
     "Zmierz osobno lewą kolumnę, lewy sub, prawą kolumnę i prawy sub. Dodaj rzeczywiste sumy lewa kolumna+sub i prawa kolumna+sub oraz powtórzenia; dodaj sumę stereo. Suma utworzona obliczeniowo nie zastępuje pomiaru.",
     "Zmiana poziomu: wykonaj kontrolne sumy przy drugim, udokumentowanym poziomie cyfrowym subów. Pozostałe warunki muszą odpowiadać RAW. Program porówna rzeczywistą zmianę z wpisem; nie wystarczy samo potwierdzenie pola.",
     "Obecne ustawienie przed Dirac: wgraj znany podział i opóźnienia, pozostaw Dirac OFF. Zmierz oddzielnie MAIN, SUB i ich SUM po lewej i prawej stronie przy tej samej pozycji i opisanym poziomie.",
     "Zapisz każdą sesję do osobnego MDAT. Poziomy mają być bezpieczne dla sprzętu i mikrofonu; przerwij przy przesterowaniu. Nie zdejmuj filtrów ochronnych poza zweryfikowanym protokołem swojego systemu."]),
  "levels": ("Które poziomy wpisać", [
     "Wpisujesz cyfrowy poziom wyjść subwooferowych miniDSP, osobno L i R. To nie głośność główna ani położenie pokrętła REL.",
-    "Bazowy — rzeczywisty poziom podczas RAW. Pomiar Dirac — poziom używany do kalibracji. Odsłuch — docelowy poziom cyfrowy po kalibracji.",
+    "„Pomiar bez zwrotnicy DSP” — poziom subwooferów podczas pomiarów RAW. „Pomiar Dirac” — poziom podczas kalibracji. „Odsłuch” — poziom, przy którym będziesz słuchać po kalibracji.",
     "Dopisz źródło: konsola, sesja i data. Nie uzupełniaj braków wartościami −6/−4/0, jeśli ich nie potwierdziłeś.",
     "Obecny silnik wymaga takich samych poziomów L/R i zweryfikowanego wzrostu między RAW a odsłuchem (do 12 dB). Poziom Dirac musi być pomiędzy nimi. Inny stan nie daje podstaw do eksportu; porównanie SPL pozostaje dostępne."]),
  "check": ("Co sprawdza kontrola pomiarów", [
@@ -165,10 +182,10 @@ HELP = {
     "Kontrola zmiany poziomu może ujawnić więcej niż jedno rozwiązanie. Wtedy projektowanie zostaje zatrzymane; potrzebny jest pomiar rozstrzygający, a nie wybór dogodnej liczby.",
     "Jeśli brakuje sumy kontrolnej, zmierz ją w warunkach całej sesji i zapisz kompletny MDAT. Odłącz poprzedni niepełny plik z projektu przed przypisaniem nowego do tej samej sesji. Odłączenie nie usuwa pliku z dysku.",
     "Jeśli komunikat wymaga potwierdzenia warunków lub pozycji, otwórz Opisz pomiary. Dla błędu poziomów sprawdź Poziomy subów i warunki drugiej sesji. Nie potwierdzaj nieznanych danych.",
-    "Jeśli MDAT nie da się jednoznacznie odczytać, wczytaj ślady z otwartego REW. Treść blokady znajdziesz przy konkretnym pliku w tabeli wyników kontroli."]),
+    "Jeśli MDAT nie da się jednoznacznie odczytać, wczytaj pomiary z otwartego REW. Treść blokady znajdziesz przy konkretnym pliku w tabeli wyników kontroli."]),
  "verify": ("Dlaczego trzeba sprawdzić odniesienie", [
     "Wczytaj obecne ustawienie zmierzone przed Dirac i przypisz je do dokładnej wersji ustawienia z konsoli.",
-    "Sprawdź zgodność poziomu, pozycji mikrofonu, toru i głośności z serią bazową.",
+    "Sprawdź zgodność poziomu, pozycji mikrofonu, toru i głośności z pomiarami wykonanymi bez zwrotnicy DSP.",
     "Kliknij Sprawdź obecne ustawienie. Program spróbuje odtworzyć rzeczywisty pomiar z RAW i parametrów. Nie udowadnia w ten sposób każdego absolutnego delayu z osobna.",
     "Konflikt lub brak pomiaru ma pozostać widoczny. Sama nazwa 90 BW48 albo załączony plik nie stanowią dowodu."]),
  "design": ("Jak wybrać próbę, która ma sens", [
@@ -181,12 +198,12 @@ HELP = {
     "Wczytaj cztery filtry do bloku Crossover (96 kHz) zgodnie z OUT1=L kolumna, OUT2=R kolumna, OUT3=L sub, OUT4=R sub. Nie dubluj ich w PEQ. Wprowadź dokładne delaye i poziomy z plików próby.",
     "Najpierw zmierz nowy wariant z Dirac OFF: MAIN, SUB i SUM osobno dla L/R oraz sumę stereo. Sprawdź zgodność z symulacją. Duża rozbieżność wymaga wyjaśnienia przed kalibracją.",
     "Dopiero potem wykonaj nową sesję Dirac dla tego wariantu. Zachowaj porównywalny target, kurtyny i układ punktów. Mikrofon UMIK-1 pionowo z właściwym plikiem 90°. Dokładny rozstaw według zatwierdzonej procedury sesji.",
-    "Zmierz oba warianty po ich właściwych filtrach Dirac, z kapsułą w tej samej pozycji. Dodaj nazwę nowego ustawienia w Porównaniu, wczytaj pomiary i przypisz je do właściwych wersji.",
+    "Zmierz oba warianty po ich właściwych filtrach Dirac, z mikrofonem w tej samej pozycji. Dodaj nazwę nowego ustawienia w Porównaniu, wczytaj pomiary i przypisz je do właściwych wersji.",
     "Porównaj A/B przy wyrównanej głośności. Zachowaj odniesienie, jeśli wynik pomiaru lub odsłuchu nie daje przekonującej poprawy."]),
  "names": ("Dwa ustawienia bez powtarzania projektu", [
     "Kliknij Dodaj nazwę ustawienia. Dodaj dwie czytelne nazwy, np. Obecna sesja C268 i Nowa sesja C268.",
     "Nie musisz dopisywać nieznanych opóźnień do porównania SPL. Taka nazwa nie nadaje statusu zweryfikowanej referencji projektowej.",
-    "W Opisie pomiarów przypisz ślady do A albo B, wybierz etap oraz rzeczywistą pozycję kapsuły."]),
+    "W Opisie pomiarów przypisz pomiary do A albo B, wybierz etap oraz rzeczywistą pozycję mikrofonu."]),
  "compare": ("Jak oceniać zmianę brzmienia", [
     "Wybierz A i B oraz wspólny etap: oba przed Dirac albo oba po Dirac. Potrzebne są zmierzone sumy tego samego kanału i położenia mikrofonu.",
     "Różnice w tabeli to B minus A. Plus oznacza więcej poziomu w danym paśmie, a nie automatycznie lepsze brzmienie. Bez impulsu nie ma oceny wygaszania, a sam SPL nie dowodzi poprawnej fazy.",

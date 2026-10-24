@@ -296,7 +296,7 @@ MODES: List[Mode] = [
         "raw_check",
         "0 — Kontrola pliku RAW",
         "raw_measurement_check",
-        "Kontrola bazowego RAW: zakres pasma, role pomiarów, delay0, REL120 i kompletność danych. To pierwszy test jakości wejścia.",
+        "Kontrola pomiarów bez zwrotnicy DSP (RAW): zakres pasma, role pomiarów, delay0, REL120 i kompletność danych. To pierwszy test jakości wejścia.",
     ),
     Mode(
         "gain_bridge",

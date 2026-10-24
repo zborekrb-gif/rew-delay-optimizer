@@ -34,5 +34,5 @@ def raw_contract(path):
     if source is None:
         return None
     if source["stage"] != "Bazowe" or not source.get("raw_confirmed") or not source.get("mapping_confirmed"):
-        return ("RAW_NIEPOTWIERDZONY", "EKSPORT ZABLOKOWANY", "Potwierdź przypisanie śladów i warunki pomiaru bazowego w Pomiary.")
+        return ("RAW_NIEPOTWIERDZONY", "EKSPORT ZABLOKOWANY", "Potwierdź przypisanie pomiarów i warunki pomiarów bez zwrotnicy DSP w Pomiary.")
     return ("RAW_VERIFIED_BY_NAMES", "EXPORT DOZWOLONY", "Stan RAW zadeklarowano jawnie w projekcie; niezależna kontrola fazy i sumowania nadal obowiązuje.")

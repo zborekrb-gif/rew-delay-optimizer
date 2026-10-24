@@ -143,7 +143,7 @@ def compare_time(project, *, source_id, stage, config_a, config_b, position, con
             raise ValueError(f"Migawka zawiera sprzeczną deklarację {key}. Sprawdź sesję i pobierz właściwy zestaw; potwierdzenie w oknie nie nadpisuje pliku.")
     raw_records = payload["measurements"]
     if len(all_items) != len(raw_records):
-        raise ValueError("Odczyt nie zachował wszystkich indeksów pomiarów. Nie przypisano czasu do innego śladu.")
+        raise ValueError("Odczyt nie zachował wszystkich indeksów pomiarów. Nie przypisano czasu do innego pomiaru.")
     grouped_items = {cfg: {role: [] for role in ROLE_ORDER} for cfg in groups}
     provenance, band_rows, seen_positions, seen_uuids = [], [], set(), set()
     selected_items = []
@@ -156,7 +156,7 @@ def compare_time(project, *, source_id, stage, config_a, config_b, position, con
                     raise ValueError("Przypisanie zawiera powtórzony albo niepoprawny indeks pomiaru. Nie można policzyć go jako niezależne powtórzenie.")
                 seen_positions.add(index)
                 if trace.get("id") != digest([source["sha256"], index]):
-                    raise ValueError("Identyfikator śladu nie odpowiada źródłu. Wczytaj źródło ponownie i potwierdź przypisanie.")
+                    raise ValueError("Identyfikator pomiaru nie odpowiada źródłu. Wczytaj źródło ponownie i potwierdź przypisanie.")
                 raw, item = raw_records[index - 1], all_items[index - 1]
                 summary = raw.get("summary") or {}
                 measurement_uuid = str(summary.get("uuid") or summary.get("id") or "").strip()

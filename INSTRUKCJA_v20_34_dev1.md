@@ -22,7 +22,7 @@ W tej ścieżce programu odczyt MDAT dostarcza danych do porównania SPL. Pełna
 
 1. Otwórz odpowiedni MDAT w REW i udostępnij lokalne API REW.
 2. W REWDO wybierz **Wczytaj pomiary → Z otwartego REW** albo przycisk importu w oknie analizy czasu. Program pobiera natywne SPL i fazę oraz prosi API o group delay i impuls.
-3. W **Pomiary → Opisz pomiary** przypisz śladom ustawienie A lub B, rolę sumy L/R/L+R, etap i miejsce kapsuły. Potwierdź przypisanie. Nazwy śladów mogą pozostać takie jak w REW.
+3. W **Pomiary → Opisz pomiary** przypisz pomiarom ustawienie A lub B, rolę sumy L/R/L+R, etap i miejsce mikrofonu. Potwierdź przypisanie. Nazwy pomiarów mogą pozostać takie jak w REW.
 4. Wróć do pełnej analizy czasu. Lista pomiarów ma pokazać A: co najmniej 3/3/3 i B: co najmniej 1/1/1.
 
 Nie kopiuj jednego pomiaru, aby uzyskać trzy powtórzenia. Taka kopia nie wyznacza naturalnego rozrzutu sesji. Nie łącz różnych miejsc mikrofonu pod jedną nazwą.
@@ -41,7 +41,7 @@ Jeżeli wynik wskazuje poprawę, wyrównaj głośność odsłuchu A/B i sprawdź
 
 ## Kontrole danych
 
-Wynik jest powiązany z SHA-256 pliku i konkretnymi identyfikatorami śladów, wersjami konfiguracji, etapem oraz pozycją. Odczyt sprawdza integralność natywnej odpowiedzi, liczby w impulsach, zakres danych, zgodność skali czasu i próbkowania, referencję czasu oraz stabilność odniesienia A. Tożsamy UUID REW lub powtórzony indeks nie jest liczony jako niezależna próba.
+Wynik jest powiązany z SHA-256 pliku i konkretnymi identyfikatorami pomiarów, wersjami konfiguracji, etapem oraz pozycją. Odczyt sprawdza integralność natywnej odpowiedzi, liczby w impulsach, zakres danych, zgodność skali czasu i próbkowania, referencję czasu oraz stabilność odniesienia A. Tożsamy UUID REW lub powtórzony indeks nie jest liczony jako niezależna próba.
 
 Brakujące deklaracje warunków w migawce można uzupełnić jawnym potwierdzeniem w projekcie dla tego porównania. Zapisana sprzeczna deklaracja w źródle blokuje analizę. Źródłowy JSON nie jest poprawiany automatycznie. Deklaracja operatora pozostaje deklaracją, nie dowodem fizycznych warunków.
 

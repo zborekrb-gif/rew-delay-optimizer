@@ -10,7 +10,7 @@ Przycisk **Plan i instrukcje krok po kroku** pokazuje całą drogę i dokładne 
 
 ## Wybierz cel
 
-- **Dobrać połączenie kolumn i subów:** zapisz obecne ustawienie, dołącz sesje bazowe, kontrolę poziomu i odniesienie przed Dirac. Wpisz rzeczywiste poziomy i wykonaj kontrole. Potem porównaj najwyżej dwa warianty, przygotuj jeden do próby, zmierz go i wykonaj właściwy dla niego Dirac.
+- **Dobrać połączenie kolumn i subów:** zapisz obecne ustawienie, dołącz pomiary bez zwrotnicy DSP, kontrolę poziomu i odniesienie przed Dirac. Wpisz rzeczywiste poziomy i wykonaj kontrole. Potem porównaj najwyżej dwa warianty, przygotuj jeden do próby, zmierz go i wykonaj właściwy dla niego Dirac.
 - **Porównać gotowe pomiary / sesje Dirac:** dodaj dwie nazwy ustawień, wczytaj pomiary i opisz ich etap oraz miejsce mikrofonu. RAW ani znajomość delayów nie są potrzebne do samego porównania SPL. Ten cel wybierzesz w planie lub przechodząc do zakładki Porównanie i odsłuch.
 
 Jeśli obecne C268 dobrze brzmi i chcesz sprawdzić inną sesję Dirac przy tej samej zwrotnicy, skorzystaj z porównania gotowych pomiarów. Nie trzeba projektować zwrotnicy od nowa.
@@ -19,14 +19,14 @@ Jeśli obecne C268 dobrze brzmi i chcesz sprawdzić inną sesję Dirac przy tej 
 
 1. Wczytaj MDAT lub pomiary z otwartego REW.
 2. Zaznacz wiersz i kliknij **Opisz pomiary**. Jeśli korzystasz z „Co teraz”, aplikacja wskaże właściwy plik.
-3. Wybierz etap sesji i ustawienie. Dla każdego śladu sprawdź, co grało: kolumna, subwoofer, ich para lub cały system.
-4. Wpisz rzeczywiste miejsce kapsuły, np. MLP. Kanał L/R oznacza grającą stronę, a nie położenie mikrofonu.
-5. Dla jednolitej sesji możesz zastosować etap, ustawienie i wpisane miejsce do wszystkich śladów. Rolę każdego śladu zachowujemy osobno.
-6. Potwierdź znane warunki sesji i uruchom kontrolę. Bieżąca edycja wybranego śladu zapisuje się także po kliknięciu końcowego przycisku.
+3. Wybierz etap sesji i ustawienie. Dla każdego pomiaru sprawdź, co grało: kolumna, subwoofer, ich para lub cały system.
+4. Wpisz rzeczywiste miejsce mikrofonu, np. MLP. Kanał L/R oznacza grającą stronę, a nie położenie mikrofonu.
+5. Dla jednolitej sesji możesz zastosować etap, ustawienie i wpisane miejsce do wszystkich pomiarów. Rolę każdego pomiaru zachowujemy osobno.
+6. Potwierdź znane warunki sesji i uruchom kontrolę. Bieżąca edycja wybranego pomiaru zapisuje się także po kliknięciu końcowego przycisku.
 
 Wyniki kontroli zobaczysz przy konkretnym pliku. Zaznaczenie wiersza pokazuje całą przyczynę poniżej; długą treść można przewijać. Nie trzeba szukać jej w logu. Nieznanych warunków nie potwierdzaj na podstawie samej nazwy pliku.
 
-Gdy zastępujesz niepełny pomiar kompletnym, użyj **Odłącz plik**, a potem wczytaj nowy. Odłączenie usuwa powiązanie z projektu i unieważnia zależne wyniki; oryginalny plik pozostaje na dysku. Dwie alternatywne sesje bazowe nie mogą być jednocześnie traktowane jako jedna baza.
+Gdy zastępujesz niepełny pomiar kompletnym, użyj **Odłącz plik**, a potem wczytaj nowy. Odłączenie usuwa powiązanie z projektu i unieważnia zależne wyniki; oryginalny plik pozostaje na dysku. Do projektowania wybierz jeden kompletny zestaw pomiarów bez zwrotnicy DSP. Gdy zastępujesz go nowym zestawem, odłącz poprzedni plik od projektu.
 
 ## Od wariantu do decyzji
 
