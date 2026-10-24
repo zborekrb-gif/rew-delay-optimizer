@@ -326,3 +326,7 @@ class TimeAnalysisWindow(tk.Toplevel):
         if self.host.time_window is self:
             self.host.time_window=None
         self.destroy()
+        # Release Tcl variables on the GUI thread before a worker can trigger GC.
+        self.confirmations.clear()
+        self.source_var=None
+        self.position_var=None

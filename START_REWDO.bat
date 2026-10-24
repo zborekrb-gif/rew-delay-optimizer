@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 if exist "%~dp0REWDO_GUI.exe" (
-    start "REWDO 20.34-dev1" "%~dp0REWDO_GUI.exe"
+    start "REWDO 20.34-dev2" "%~dp0REWDO_GUI.exe"
     exit /b 0
 )
 call "%~dp0RUN_APP.cmd"

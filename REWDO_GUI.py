@@ -80,6 +80,7 @@ class App(tk.Tk):
         self.project, self.path = new_project(), None
         self.job, self.latest, self.design_result, self.compare_result = None, None, None, None
         self.time_result, self.time_window = None, None
+        self.full_window=None
         self.log, self.stage, self.api = [], "Projekt gotowy. Zacznij od zalecanego kroku u góry.", None
         try:
             prefs = user_dir()/"preferences.json"
@@ -264,7 +265,7 @@ class App(tk.Tk):
         actions.grid(row=2,column=0,sticky="ew",pady=6)
         self.button(actions,"Porównaj A i B",self.compare).pack(side="left")
         self.button(actions,"Dodaj nazwę ustawienia",self.add_preset).pack(side="left",padx=6)
-        self.button(actions,"Czas i powtarzalność…",self.time_dialog).pack(side="left",padx=6)
+        self.button(actions,"Pełne porównanie…",self.full_dialog).pack(side="left",padx=6)
         ttk.Button(actions,text="Jak oceniać odsłuch?",command=lambda:self.guide_dialog("compare")).pack(side="left")
         self.compare_summary=ttk.Label(p,text="Możesz zacząć od gotowych pomiarów; RAW i referencja do projektowania nie są wymagane.",wraplength=950)
         self.compare_summary.grid(row=3,column=0,sticky="ew",pady=(0,6))
@@ -532,12 +533,14 @@ class App(tk.Tk):
         self.time_result=None
         if self.time_window and self.time_window.winfo_exists():
             self.time_window.close()
+        if self.full_window and self.full_window.winfo_exists():
+            self.full_window.close()
         self.comparison.delete(*self.comparison.get_children())
         self.design_summary.configure(text="Wyniki zależą od aktualnej wersji projektu. Potwierdź dane i uruchom dobór.")
         self.candidate_note.configure(text="")
         for frame in (self.design_plot,self.compare_plot):
             self.plot(frame,[],"")
-        for tasks in (("standard","custom"),("compare",),("check",)):
+        for tasks in (("standard","custom"),("compare","full_compare"),("check",)):
             result=next((r for r in reversed(self.project["runs"]) if r.get("task") in tasks),None)
             if result and result_is_current(self.project,result):
                 self.present(result)
@@ -847,6 +850,8 @@ class App(tk.Tk):
                     result.setdefault("task",self.job.request["task"])
                     if result["task"]=="time_compare":
                         result.setdefault("time_request",copy.deepcopy(self.job.request.get("args",{})))
+                    if result["task"]=="full_compare":
+                        result.setdefault("full_request",copy.deepcopy(self.job.request.get("args",{})))
                     result["directory"]=str(self.job.directory)
                     self.job=None
                     self.set_busy(False)
@@ -914,7 +919,7 @@ class App(tk.Tk):
                 curves.append((c["label"],c["curve"]["frequency"],c["curve"]["spl"]))
             self.plot(self.design_plot,curves,"Suma stereo — symulacja w stanie pomiaru Dirac")
             self.export_button.pack_forget()
-        elif task=="compare":
+        elif task in {"compare","full_compare"}:
             self.compare_result=result
             if result.get("status")=="ok":
                 labels={key:label for label,key in self.choices().items()}
@@ -926,6 +931,9 @@ class App(tk.Tk):
                 self.matched.set(note["level_matched"] if note else False)
                 self.note.set(note["note"] if note else "")
             self.compare_summary.configure(text=("Pomiar: pokazano B − A, bez wyrównania poziomu. Zaznacz wiersz, aby obejrzeć wykres. Odsłuch: wyrównaj głośność i zapisz własny wybór." if result.get("status")=="ok" else result["message"]+"\n"+result.get("next","")))
+            if task=='full_compare':
+                self.compare_summary.configure(text=result['message']+'\nCo zrobić teraz: '+result.get('next_short',result.get('next','')))
+                if self.full_window and self.full_window.winfo_exists():self.full_window.present(result)
             self.comparison.delete(*self.comparison.get_children())
             for i,r in enumerate(result.get("rows",[])):
                 self.comparison.insert("","end",iid=str(i),values=(r["position"],r["role"],*[self.fmt(r["delta_db"][k]) for k in ("30–60 Hz","80–110 Hz","100–220 Hz")]))
@@ -993,6 +1001,18 @@ class App(tk.Tk):
             return
         self.project["ui"].update(compare_stage=self.stage_var.get(),compare_a=a,compare_b=b)
         self.time_window=TimeAnalysisWindow(self,a,b,self.stage_var.get())
+
+    def full_dialog(self):
+        if self.job:return
+        choices=self.choices();a=choices.get(self.a_var.get());b=choices.get(self.b_var.get())
+        if not a or not b or a==b:
+            messagebox.showinfo('Pełne porównanie','Wybierz dwa różne ustawienia A i B nad tabelą. A będzie odniesieniem.',parent=self);return
+        if self.stage_var.get()!='Po Dirac':
+            messagebox.showinfo('Pełne porównanie','Ta analiza dotyczy pomiarów po Dirac. Wybierz etap Po Dirac; zwykłe porównanie SPL pozostaje dostępne dla obu etapów.',parent=self);return
+        from rew_comparison_gui import ComparisonWindow
+        if self.full_window and self.full_window.winfo_exists():self.full_window.lift();return
+        self.project['ui'].update(compare_stage='Po Dirac',compare_a=a,compare_b=b)
+        self.full_window=ComparisonWindow(self,a,b)
 
     def compare_curve(self,event=None):
         ids=self.comparison.selection()
@@ -1067,6 +1087,16 @@ class App(tk.Tk):
         if self.job:
             self.stage="Zatrzymywanie obliczeń i procesów potomnych…"
             self.job.cancel()
+
+    def destroy(self):
+        if getattr(self,'_rewdo_destroying',False):return
+        self._rewdo_destroying=True
+        for name in ('full_window','time_window'):
+            window=getattr(self,name,None)
+            if window is not None and window.winfo_exists():window.close()
+        super().destroy()
+        for key,value in list(self.__dict__.items()):
+            if isinstance(value,tk.Variable):setattr(self,key,None)
 
     def close(self):
         if self.job:

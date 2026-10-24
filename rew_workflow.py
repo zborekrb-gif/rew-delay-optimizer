@@ -505,7 +505,7 @@ def run_task(project, out, task, args=None, emit=print):
     args = args or {}
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    emit({"type": "stage", "message": {"check":"Sprawdzanie pomiarów", "standard":"Dobór zwrotnicy i opóźnień", "custom":"Projektowanie własnej zwrotnicy", "compare":"Porównanie pomiarów", "time_compare":"Analiza impulsów, powtarzalności i pełnego zestawu L/R/L+R", "verify":"Sprawdzanie odniesienia", "export":"Ponowna kontrola wybranego wariantu"}.get(task, task)})
+    emit({"type": "stage", "message": {"check":"Sprawdzanie pomiarów", "standard":"Dobór zwrotnicy i opóźnień", "custom":"Projektowanie własnej zwrotnicy", "compare":"Porównanie pomiarów", "full_compare":"Porównanie po Dirac i przygotowanie zalecenia", "time_compare":"Analiza impulsów, powtarzalności i pełnego zestawu L/R/L+R", "verify":"Sprawdzanie odniesienia", "export":"Ponowna kontrola wybranego wariantu"}.get(task, task)})
     result = {"schema": 1, "run_id": out.name, "fingerprint": fingerprint(project), "task": task, "created": utc_now(), "sources": [{"id":s["id"], "sha256":s["sha256"]} for s in project["sources"]], "candidates": []}
     try:
         if task == "import":
@@ -527,6 +527,12 @@ def run_task(project, out, task, args=None, emit=print):
             result.update(design(project, out / "technical", task, lambda msg: emit({"type":"stage", "message":msg})))
         elif task == "compare":
             result.update(compare(project, args["stage"], args["a"], args["b"]))
+        elif task == "full_compare":
+            from rew_project_comparison import compare_post_dirac, write_artifacts
+            result['full_request']=copy.deepcopy(args)
+            result.update(compare_post_dirac(project,source_id=args.get('source_id'),config_a=args.get('a'),config_b=args.get('b'),
+                position=args.get('position'),selected=args.get('selected'),confirmations=args.get('confirmations'),include_time=args.get('include_time',True)))
+            result['full_report_dir']=write_artifacts(out,project,result)
         elif task == "time_compare":
             from rew_project_time import compare_time, write_artifacts
             result["time_request"] = {key: args.get(key) for key in ("source_id", "stage", "a", "b", "position", "confirmations")}

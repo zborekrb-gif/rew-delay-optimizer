@@ -196,7 +196,8 @@ def test_worker_writes_identified_result_and_data_failure(tmp_path):
     report = tmp_path/'run/pelna_analiza_czasu'
     assert len(list(report.iterdir())) == 5
     text = (report/'WYNIK_I_NASTEPNY_KROK.md').read_text()
-    assert '20.34-dev1' in text and 'Powtarzalność odniesienia A' in text
+    from rew_app_metadata import APP_VERSION
+    assert APP_VERSION in text and 'Powtarzalność odniesienia A' in text
     assert '125–220 Hz' in text and 'T20/RT60' in text
     assert p['sources'][0]['sha256'] in text
     worker_args['position'] = 'other'

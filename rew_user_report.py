@@ -7,15 +7,19 @@ def write_summary(path,project,result):
     def safe(v):
         return str(v).replace("|","/").replace("\n"," ")
     c=active_config(project)
-    if result.get("time_analysis"):
+    if result.get("time_analysis") or result.get('post_dirac'):
         c=next((item for item in project["configurations"] if item["key"]==result["config_a"]),None)
     lines=[f"# REWDO {APP_VERSION} — podsumowanie","",f"Projekt: {safe(project['name'])}",
-           f"Odniesienie: {safe(c['label']) if c else 'nieustalone'}","",result.get("message","Brak decyzji."),"",
-           "Następny krok: "+result.get("next","—"),""]
+           f"Odniesienie: {safe(c['label']) if c else 'nieustalone'}",""]
+    if not result.get('post_dirac'):
+        lines += [result.get("message","Brak decyzji."),"","Następny krok: "+result.get("next","—"),""]
     if not result_is_current(project,result):
         lines += ["**Wynik historyczny lub nieukończony. Nie służy do eksportu.**",""]
     for reason in result.get("reasons",[]):
         lines.append("- "+safe(reason))
+    if result.get('post_dirac'):
+        from rew_project_comparison import report_lines as post_lines
+        lines += post_lines(result)
     if result.get("time_analysis"):
         from rew_project_time import report_lines
         labels={c["key"]:c["label"]+f" (v{c['version']})" for c in project["configurations"]}
@@ -31,7 +35,8 @@ def write_summary(path,project,result):
     if result.get("rows"):
         labels={c["key"]:c["label"]+f" (v{c['version']})" for c in project["configurations"]}
         lines += ["", "Etap: "+safe(result["stage"]),"A: "+safe(labels.get(result["config_a"],result["config_a"])),"B: "+safe(labels.get(result["config_b"],result["config_b"]))]
-        lines += ["", *result.get("summaries",[])]
+        if not result.get('post_dirac'):
+            lines += ["", *result.get("summaries",[])]
         lines += ["","## Rzeczywiste SPL — B minus A","","| Pozycja | Suma | 30–60 Hz [dB] | 80–110 Hz [dB] | 100–220 Hz [dB] |","|---|---|---:|---:|---:|"]
         for row in result["rows"]:
             vals=["—" if v is None else f"{v:+.2f}" for v in row["delta_db"].values()]

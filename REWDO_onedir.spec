@@ -11,6 +11,7 @@ from PyInstaller.utils.hooks import collect_data_files
 
 datas = []
 for name in [
+    "INSTRUKCJA_v20_34_dev2.md",
     "INSTRUKCJA_v20_34_dev1.md",
     "BUILD_IDENTITY.json",
     "INSTRUKCJA_v20_32.md",
@@ -26,6 +27,7 @@ except Exception:
     pass
 
 hiddenimports = [
+    "rew_project_comparison", "rew_comparison_gui",
     "rew_project_time", "rew_time_gui",
     "rew_project", "rew_source_binding", "rew_workflow", "rew_process", "rew_task_runner", "rew_user_report",
     "rew_legacy_launcher", "rew_reference_registry", "matplotlib.backends.backend_tkagg",
