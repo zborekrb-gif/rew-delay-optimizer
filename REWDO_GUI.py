@@ -1,4 +1,4 @@
-"""REWDO 20.32. One application, three task-oriented workspaces."""
+"""REWDO 20.33. Guided measurement, design and listening workflow."""
 from __future__ import annotations
 import copy
 import json
@@ -7,13 +7,15 @@ import queue
 import subprocess
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
 from rew_project import (STAGES, STEPS, ROLES, active_config, changed, fingerprint, load_project,
     new_project, number, put_config, put_measurement_preset, relocate, result_is_current, save_project, uid, user_dir, utc_now)
 from rew_process import ProcessJob
+from rew_guidance import ROLE_LABELS, plan, next_step, help_text, current_run
 
-APP_VERSION = "20.32"
+APP_VERSION = "20.33"
 
 
 def __getattr__(name):
@@ -53,9 +55,10 @@ class ScrolledTable(ttk.Treeview):
 
 def table(parent, columns, height=5):
     t = ScrolledTable(parent, columns=[c[0] for c in columns], show="headings", height=height, selectmode="browse")
+    scale=max(1.0,float(parent.tk.call("tk","scaling"))/(96/72))
     for key, label, width in columns:
         t.heading(key, text=label)
-        t.column(key, width=width, minwidth=60)
+        t.column(key, width=int(width*scale), minwidth=int(60*scale))
     return t
 
 
@@ -70,12 +73,13 @@ def field(parent, row, label, value="", choices=None, width=28):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("REWDO 20.32")
-        self.geometry(f"{min(1120,self.winfo_screenwidth()-60)}x{min(730,self.winfo_screenheight()-90)}")
-        self.minsize(840, 560)
+        self.title("REWDO 20.33 — od pomiaru do odsłuchu")
+        self.ui_scale=max(1.0,float(self.tk.call("tk","scaling"))/(96/72))
+        self.geometry(f"{min(int(1120*self.ui_scale),self.winfo_screenwidth()-60)}x{min(int(730*self.ui_scale),self.winfo_screenheight()-90)}")
+        self.minsize(min(int(840*self.ui_scale),self.winfo_screenwidth()-60),min(int(560*self.ui_scale),self.winfo_screenheight()-90))
         self.project, self.path = new_project(), None
         self.job, self.latest, self.design_result, self.compare_result = None, None, None, None
-        self.log, self.stage, self.api = [], "Wczytaj pomiary, aby rozpocząć.", None
+        self.log, self.stage, self.api = [], "Projekt gotowy. Zacznij od zalecanego kroku u góry.", None
         try:
             prefs = user_dir()/"preferences.json"
             if prefs.is_file():
@@ -85,16 +89,32 @@ class App(tk.Tk):
             self.path = None
             self.stage = f"Nie przywrócono projektu: {exc}. Wskaż go przez Projekt → Otwórz."
         style=ttk.Style(self)
+        self.font_family="Segoe UI" if os.name=="nt" else "DejaVu Sans"
+        for name in ("TkDefaultFont","TkTextFont","TkMenuFont","TkHeadingFont"):
+            tkfont.nametofont(name).configure(family=self.font_family,size=10)
         if "clam" in style.theme_names():
             style.theme_use("clam")
+        self.configure(background="#f3f5f7")
+        style.configure("TFrame",background="#f3f5f7")
+        style.configure("TLabel",background="#f3f5f7",foreground="#233746")
+        style.configure("TLabelframe",background="#f3f5f7")
+        style.configure("TLabelframe.Label",background="#f3f5f7",foreground="#233746")
+        style.configure("TNotebook",background="#f3f5f7",borderwidth=0)
+        style.configure("TNotebook.Tab",padding=(12,6))
+        style.configure("Treeview",rowheight=int(25*self.ui_scale),background="white",fieldbackground="white")
+        style.configure("Treeview.Heading",font=(self.font_family,10,"bold"))
         style.configure("TButton",padding=(8,4))
+        style.configure("Guide.TFrame",background="#edf3f6")
+        style.configure("Guide.TLabel",background="#edf3f6",foreground="#183847")
+        style.configure("GuideTitle.TLabel",background="#edf3f6",foreground="#183847",font=(self.font_family,11,"bold"))
+        style.configure("Primary.TButton",padding=(12,7),font=(self.font_family,10,"bold"))
         self.columnconfigure(0,weight=1)
-        self.rowconfigure(1,weight=1)
+        self.rowconfigure(2,weight=1)
         self.busy_widgets=[]
         top=ttk.Frame(self,padding=10)
         top.grid(row=0,column=0,sticky="ew")
         top.columnconfigure(0,weight=1)
-        self.header=ttk.Label(top,font=("Segoe UI",12,"bold"))
+        self.header=ttk.Label(top,font=(self.font_family,12,"bold"))
         self.header.grid(row=0,column=0,sticky="w")
         self.ref_label=ttk.Label(top)
         self.ref_label.grid(row=1,column=0,sticky="w")
@@ -107,8 +127,21 @@ class App(tk.Tk):
         self.busy_widgets.append(menu)
         ttk.Button(top,text="Zapisz projekt",command=self.save).grid(row=0,column=2,rowspan=2,padx=4)
         self.button(top,"Mój system",self.system).grid(row=0,column=3,rowspan=2,padx=4)
+        guide=ttk.Frame(self,padding=(12,8),style="Guide.TFrame")
+        guide.grid(row=1,column=0,sticky="ew",padx=10,pady=(0,7))
+        guide.columnconfigure(0,weight=1)
+        self.guide_title=ttk.Label(guide,style="GuideTitle.TLabel")
+        self.guide_title.grid(row=0,column=0,sticky="w")
+        self.guide_reason=ttk.Label(guide,style="Guide.TLabel",wraplength=640,justify="left")
+        self.guide_reason.grid(row=1,column=0,sticky="ew",pady=(3,0))
+        controls=ttk.Frame(guide,style="Guide.TFrame")
+        controls.grid(row=0,column=1,rowspan=2,padx=(14,0),sticky="ne")
+        self.guide_button=self.button(controls,"Zacznij",self.do_next)
+        self.guide_button.configure(style="Primary.TButton")
+        self.guide_button.pack(fill="x")
+        ttk.Button(controls,text="Plan i instrukcje krok po kroku",command=self.guide_dialog).pack(fill="x",pady=(4,0))
         self.tabs=ttk.Notebook(self)
-        self.tabs.grid(row=1,column=0,sticky="nsew",padx=10)
+        self.tabs.grid(row=2,column=0,sticky="nsew",padx=10)
         self.pages=[]
         for name in STEPS:
             page=ttk.Frame(self.tabs,padding=10)
@@ -119,7 +152,7 @@ class App(tk.Tk):
         self.design_page()
         self.compare_page()
         bottom=ttk.Frame(self,padding=10)
-        bottom.grid(row=2,column=0,sticky="ew")
+        bottom.grid(row=3,column=0,sticky="ew")
         bottom.columnconfigure(0,weight=1)
         self.status=ttk.Label(bottom,text=self.stage,wraplength=700)
         self.status.grid(row=0,column=0,sticky="w")
@@ -129,6 +162,9 @@ class App(tk.Tk):
         self.refresh()
         self.tabs.select(min(2,max(0,self.project["ui"]["step"])))
         self.tabs.bind("<<NotebookTabChanged>>",self.step_changed)
+        self.bind("<F1>",lambda event:self.guide_dialog())
+        self.bind("<Control-s>",lambda event:self.save())
+        self.bind("<Configure>",self.resize_help,add="+")
         self.protocol("WM_DELETE_WINDOW",self.close)
         self.after(100,self.poll)
 
@@ -138,11 +174,13 @@ class App(tk.Tk):
         return b
 
     def description(self,page,text):
-        ttk.Label(page,text=text,wraplength=950).grid(row=0,column=0,sticky="w",pady=(0,8))
+        label=ttk.Label(page,text=text,wraplength=950)
+        label.grid(row=0,column=0,sticky="w",pady=(0,8))
+        page.bind("<Configure>",lambda event:label.configure(wraplength=max(300,event.width-25)),add="+")
 
     def measurements_page(self):
         p=self.pages[0]
-        self.description(p,"Wczytaj pomiary. Sprawdzę, do czego można ich użyć i czego ewentualnie brakuje.")
+        self.description(p,"1. Wczytaj plik.  2. Opisz, co mierzono.  3. Sprawdź dane. Instrukcję danej sesji znajdziesz w planie u góry.")
         row=ttk.Frame(p)
         row.grid(row=1,column=0,sticky="ew",pady=(0,8))
         load=ttk.Menubutton(row,text="Wczytaj pomiary")
@@ -152,28 +190,44 @@ class App(tk.Tk):
         load["menu"]=menu
         load.pack(side="left")
         self.busy_widgets.append(load)
-        for name,fn in (("Przypisz / popraw ślady",self.mapping),("Wskaż przeniesiony plik",self.locate),("Sprawdź ponownie",lambda:self.start("check"))):
+        for name,fn in (("Opisz pomiary",self.mapping),("Wskaż przeniesiony plik",self.locate),("Sprawdź pomiary",lambda:self.start("check"))):
             self.button(row,name,fn).pack(side="left",padx=5)
-        self.traces=table(p,[("source","Źródło",135),("name","Nazwa w REW",175),("config","Ustawienie",110),("element","Mierzony element",115),("channel","Kanał",70),("mic","Pozycja mikrofonu",125),("stage","Etap",105)],8)
+        self.button(row,"Odłącz plik",self.detach_source).pack(side="left",padx=5)
+        self.traces=table(p,[("source","Plik",145),("name","Nazwa w REW",180),("config","Ustawienie",125),("element","Co grało",170),("channel","Kanał",60),("mic","Miejsce mikrofonu",115),("stage","Etap",105)],5)
         self.traces.grid(row=2,column=0,sticky="nsew")
-        p.rowconfigure(2,weight=1)
+        p.rowconfigure(2,weight=2)
         self.traces.bind("<Double-1>",lambda e:self.mapping())
         self.measure_summary=ttk.Label(p,text="",wraplength=950,justify="left")
         self.measure_summary.grid(row=3,column=0,sticky="ew",pady=8)
         self.gain_label=ttk.Label(p,wraplength=950)
-        self.gain_label.grid(row=4,column=0,sticky="w")
-        self.button(p,"Sprawdź powiązanie odniesienia",lambda:self.start("verify")).grid(row=5,column=0,sticky="w",pady=(8,0))
+        self.check_table=table(p,[("item","Co sprawdzono",240),("state","Wynik",130),("message","Co ustalono / czego brakuje",560)],3)
+        self.check_table.grid(row=4,column=0,sticky="nsew")
+        p.rowconfigure(4,weight=1)
+        self.check_table.bind("<<TreeviewSelect>>",self.check_selected)
+        note_frame=ttk.Frame(p)
+        note_frame.grid(row=5,column=0,sticky="ew",pady=(4,0))
+        note_frame.columnconfigure(0,weight=1)
+        self.check_note=tk.Text(note_frame,wrap="word",font=(self.font_family,10),height=2,width=60,relief="flat",state="disabled",background="#f3f5f7")
+        self.check_note.grid(row=0,column=0,sticky="ew")
+        note_scroll=ttk.Scrollbar(note_frame,command=self.check_note.yview)
+        note_scroll.grid(row=0,column=1,sticky="ns")
+        self.check_note.configure(yscrollcommand=note_scroll.set)
+        actions=ttk.Frame(p)
+        actions.grid(row=6,column=0,sticky="ew",pady=(6,0))
+        self.button(actions,"Sprawdź obecne ustawienie",lambda:self.start("verify")).pack(side="left")
+        ttk.Button(actions,text="Jak wykonać brakujący pomiar?",command=lambda:self.guide_dialog("sessions")).pack(side="left",padx=8)
 
     def design_page(self):
         p=self.pages[1]
-        self.description(p,"Poszukam lepszego połączenia kolumn z subwooferami. Wynik sprawdzisz pomiarem i odsłuchem.")
+        self.description(p,"Najpierw sprawdź pomiary i obecne ustawienie. Potem oblicz warianty, zaznacz jeden w tabeli i przygotuj próbę na sprzęcie.")
         row=ttk.Frame(p)
         row.grid(row=1,column=0,sticky="ew")
         self.button(row,"Znajdź ustawienia do sprawdzenia",lambda:self.start("standard")).pack(side="left")
         self.button(row,"Szukaj dokładniej — własna zwrotnica",lambda:self.start("custom")).pack(side="left",padx=8)
+        ttk.Button(row,text="Jak wybrać?",command=lambda:self.guide_dialog("design")).pack(side="left")
         self.design_summary=ttk.Label(p,text="Najpierw potwierdź pomiary, poziomy i odniesienie. OFF/OFF, all-pass wyłączony.",wraplength=950)
         self.design_summary.grid(row=2,column=0,sticky="ew",pady=10)
-        self.candidates=table(p,[("setting","Ustawienie",245),("sum","Zmiana sumowania L/R [dB]",230),("body","100–220 Hz [dB]",145),("evidence","Dowód",240)],3)
+        self.candidates=table(p,[("setting","Ustawienie",245),("sum","Sumowanie L/R: zmiana [dB]",230),("body","100–220 Hz: zmiana [dB]",170),("evidence","Na jakiej podstawie",240)],3)
         self.candidates.grid(row=3,column=0,sticky="ew")
         self.candidates.bind("<<TreeviewSelect>>",self.select_candidate)
         self.candidate_note=ttk.Label(p,wraplength=950,justify="left")
@@ -188,7 +242,7 @@ class App(tk.Tk):
 
     def compare_page(self):
         p=self.pages[2]
-        self.description(p,"Porównaj rzeczywiste pomiary i zapisz, które ustawienie brzmi lepiej.")
+        self.description(p,"Wybierz dwa ustawienia z tego samego etapu i miejsca mikrofonu. Różnice w tabeli to B − A; więcej poziomu nie musi oznaczać poprawy.")
         row=ttk.Frame(p)
         row.grid(row=1,column=0,sticky="ew")
         self.stage_var=tk.StringVar(value=self.project["ui"].get("compare_stage","Po Dirac"))
@@ -205,7 +259,11 @@ class App(tk.Tk):
             combo.bind("<<ComboboxSelected>>",self.invalidate_comparison)
             self.busy_widgets.append(combo)
             self.compare_combos.append(combo)
-        self.button(p,"Porównaj z moim ustawieniem",self.compare).grid(row=2,column=0,sticky="w",pady=8)
+        actions=ttk.Frame(p)
+        actions.grid(row=2,column=0,sticky="ew",pady=6)
+        self.button(actions,"Porównaj A i B",self.compare).pack(side="left")
+        self.button(actions,"Dodaj nazwę ustawienia",self.add_preset).pack(side="left",padx=6)
+        ttk.Button(actions,text="Jak oceniać odsłuch?",command=lambda:self.guide_dialog("compare")).pack(side="left")
         self.compare_summary=ttk.Label(p,text="Możesz zacząć od gotowych pomiarów; RAW i referencja do projektowania nie są wymagane.",wraplength=950)
         self.compare_summary.grid(row=3,column=0,sticky="ew",pady=(0,6))
         self.comparison=table(p,[("mic","Pozycja mikrofonu",180),("role","Suma",100),("bass","30–60 Hz [dB]",170),("xo","80–110 Hz [dB]",170),("body","100–220 Hz [dB]",170)],3)
@@ -232,8 +290,168 @@ class App(tk.Tk):
             self.path=user_dir()/"projekty"/self.project["id"]/"projekt.rewdo.json"
         save_project(self.path,self.project)
 
+    def resize_help(self,event=None):
+        if event is not None and event.widget is not self:
+            return
+        width=max(300,self.winfo_width()-365)
+        self.guide_reason.configure(wraplength=width)
+        for widget in (self.measure_summary,self.design_summary,self.candidate_note,self.compare_summary):
+            widget.configure(wraplength=max(350,self.winfo_width()-65))
+        self.ref_label.configure(wraplength=max(280,self.winfo_width()-475))
+
+    def refresh_guide(self):
+        step=next_step(self.project)
+        self.guide_title.configure(text="Co teraz: "+step.title.split(". ",1)[-1])
+        self.guide_reason.configure(text=step.reason if len(step.reason)<260 else step.reason[:240]+"… Pełny opis w planie.")
+        self.guide_button.configure(text=step.button)
+
+    def do_next(self):
+        self.act(next_step(self.project))
+
+    def act(self,step):
+        if self.job:
+            return
+        action=step.action
+        if action.startswith("system_"):
+            self.system({"system_reference":0,"system_levels":1,"system_search":2}[action])
+        elif action=="import":
+            self.import_file()
+        elif action=="trial_import":
+            # Navigation only: importing a trial is not proof of success on hardware.
+            self.project["ui"]["goal"]="compare"
+            self.autosave()
+            self.refresh_guide()
+            self.tabs.select(0)
+            self.import_file()
+        elif action=="preset":
+            self.add_preset()
+        elif action=="mapping":
+            self.tabs.select(0)
+            self.mapping(step.source_id)
+        elif action in ("check","verify","standard"):
+            self.tabs.select(1 if action=="standard" else 0)
+            self.start(action)
+        elif action=="trial_help":
+            self.guide_dialog("trial")
+        elif action in ("check_help","verify_help"):
+            self.guide_dialog(action.removesuffix("_help"))
+        else:
+            self.tabs.select({"measurements":0,"design_page":1,"design_result":1,"compare_page":2}.get(action,0))
+            if action=="design_result":
+                self.candidates.focus_set()
+
+    def guide_dialog(self,key=None):
+        win=self.dialog("Plan dojścia do dobrego brzmienia","1000x650")
+        win.minsize(760,480)
+        win.columnconfigure(1,weight=1)
+        win.rowconfigure(1,weight=1)
+        goals=ttk.Frame(win,padding=10)
+        goals.grid(row=0,column=0,columnspan=2,sticky="ew")
+        ttk.Label(goals,text="Cel pracy:",font=(self.font_family,10,"bold")).pack(side="left")
+        goal=tk.StringVar(value=self.project["ui"].get("goal","design"))
+        steps=[]
+        listing=table(win,[("step","Twój plan",285),("state","Stan",130)],9)
+        listing.grid(row=1,column=0,sticky="nsew",padx=(10,5))
+        right=ttk.Frame(win,padding=10)
+        right.grid(row=1,column=1,sticky="nsew")
+        right.columnconfigure(0,weight=1)
+        right.rowconfigure(2,weight=1)
+        title=ttk.Label(right,font=(self.font_family,12,"bold"),wraplength=490)
+        title.grid(row=0,column=0,sticky="ew")
+        reason=ttk.Label(right,wraplength=490,justify="left")
+        reason.grid(row=1,column=0,sticky="ew",pady=10)
+        body_frame=ttk.Frame(right)
+        body_frame.grid(row=2,column=0,sticky="nsew")
+        body_frame.columnconfigure(0,weight=1)
+        body_frame.rowconfigure(0,weight=1)
+        body=tk.Text(body_frame,wrap="word",font=(self.font_family,10),padx=10,pady=10,relief="flat",width=45,height=14)
+        body.grid(row=0,column=0,sticky="nsew")
+        scroll=ttk.Scrollbar(body_frame,command=body.yview)
+        scroll.grid(row=0,column=1,sticky="ns")
+        body.configure(yscrollcommand=scroll.set)
+        execute=ttk.Button(right,style="Primary.TButton")
+        execute.grid(row=3,column=0,sticky="e",pady=(10,0))
+        def show(event=None):
+            ids=listing.selection()
+            if not ids:
+                return
+            step=next(s for s in steps if s.key==ids[0])
+            if step.action in ("check_help","verify_help"):
+                step=copy.copy(step)
+                step.action=step.action.removesuffix("_help")
+                step.button="Sprawdź po poprawkach"
+            heading,text=help_text(step.key)
+            title.configure(text=heading)
+            reason.configure(text=step.reason if len(step.reason)<260 else step.reason[:240]+"… Pełny opis poniżej.")
+            body.configure(state="normal")
+            body.delete("1.0","end")
+            body.insert("1.0","Bieżący stan:\n"+step.reason+"\n\nInstrukcja:\n\n"+text)
+            body.configure(state="disabled")
+            body.yview_moveto(0)
+            def proceed():
+                win.destroy()
+                self.act(step)
+            execute.configure(text=step.button,command=proceed,state="disabled" if self.job else "normal")
+        def fill(target=None):
+            nonlocal steps
+            steps=plan(self.project)
+            if target and target not in [s.key for s in steps]:
+                from rew_guidance import Step
+                steps.append(Step(target,"Instrukcja próby" if target=="trial" else "Instrukcja pomiarów","review","Instrukcja jest planem; nie potwierdza wykonania pomiaru.","measurements","Przejdź do pomiarów"))
+            listing.delete(*listing.get_children())
+            for s in steps:
+                listing.insert("","end",iid=s.key,values=(s.title,{"done":"Zapisane / sprawdzone","todo":"Do zrobienia","review":"Do oceny"}[s.state]))
+            selected=target or next_step(self.project).key
+            listing.selection_set(selected)
+            listing.see(selected)
+            show()
+        def set_goal():
+            self.project["ui"]["goal"]=goal.get()
+            self.autosave()
+            self.refresh_guide()
+            fill()
+        for text,value in (("Dobrać połączenie kolumn i subów","design"),("Porównać gotowe pomiary / sesje Dirac","compare")):
+            ttk.Radiobutton(goals,text=text,value=value,variable=goal,command=set_goal,state="disabled" if self.job else "normal").pack(side="left",padx=8)
+        listing.bind("<<TreeviewSelect>>",show)
+        right.bind("<Configure>",lambda e:(title.configure(wraplength=max(250,e.width-25)),reason.configure(wraplength=max(250,e.width-25))))
+        ttk.Button(win,text="Zamknij plan",command=win.destroy).grid(row=2,column=0,columnspan=2,sticky="e",padx=10,pady=8)
+        fill(key)
+
+    def add_preset(self):
+        if self.job:
+            return
+        win=self.dialog("Nazwij ustawienie do porównania","570x235")
+        panel=ttk.Frame(win,padding=14)
+        panel.pack(fill="both",expand=True)
+        panel.columnconfigure(1,weight=1)
+        ttk.Label(panel,text="Dodaj nazwę, np. Obecna sesja C268 lub Nowa sesja C268.\nNazwa służy do przypisania pomiarów; nie potwierdza ustawień DSP.",wraplength=520).grid(row=0,column=0,columnspan=2,sticky="w",pady=(0,8))
+        name=field(panel,1,"Nazwa ustawienia")
+        def commit():
+            if not name.get().strip():
+                messagebox.showinfo("Nazwa","Wpisz nazwę, którą rozpoznasz podczas porównania.",parent=win)
+                return
+            put_measurement_preset(self.project,name.get())
+            self.autosave()
+            self.refresh()
+            win.destroy()
+        ttk.Button(panel,text="Dodaj ustawienie",command=commit).grid(row=2,column=1,sticky="e",pady=12)
+
+    def check_selected(self,event=None):
+        ids=self.check_table.selection()
+        self.set_check_note(self.check_messages.get(ids[0],"") if ids else "")
+
+    def set_check_note(self,text):
+        self.check_note.configure(state="normal")
+        self.check_note.delete("1.0","end")
+        self.check_note.insert("1.0",text)
+        self.check_note.configure(state="disabled")
+        self.check_note.yview_moveto(0)
+
     def step_changed(self,event=None):
         self.project["ui"]["step"]=self.tabs.index(self.tabs.select())
+        if self.project["ui"]["step"] in (1,2):
+            self.project["ui"]["goal"]="compare" if self.project["ui"]["step"]==2 else "design"
+        self.refresh_guide()
         if self.path:
             self.autosave()
 
@@ -318,6 +536,11 @@ class App(tk.Tk):
             result=next((r for r in reversed(self.project["runs"]) if r.get("task") in tasks),None)
             if result and result_is_current(self.project,result):
                 self.present(result)
+        if not current_run(self.project,"check"):
+            self.check_table.delete(*self.check_table.get_children())
+            self.measure_summary.configure(text="Kontrola czeka na uruchomienie. Dołączone pliki nie mają jeszcze potwierdzonej zgodności.")
+            self.set_check_note("")
+        self.refresh_guide()
 
     def selected_source(self):
         ids=self.traces.selection()
@@ -343,15 +566,26 @@ class App(tk.Tk):
                 except ValueError as exc:
                     messagebox.showerror("Tożsamość pliku",str(exc),parent=self)
 
+    def detach_source(self):
+        if self.job:
+            return
+        source=self.selected_source()
+        if source and messagebox.askyesno("Odłącz plik",f"Odłączyć {source['name']} z tego projektu?\n\nPlik pozostanie na dysku. Zależne wyniki wymagają ponownego sprawdzenia.",parent=self):
+            self.project["sources"]=[s for s in self.project["sources"] if s["id"]!=source["id"]]
+            changed(self.project)
+            self.autosave()
+            self.refresh()
+
     def dialog(self,title,size):
         win=tk.Toplevel(self)
         win.title(title)
-        win.geometry(size)
+        width,height=map(int,size.split("x"))
+        win.geometry(f"{min(int(width*self.ui_scale),self.winfo_screenwidth()-50)}x{min(int(height*self.ui_scale),self.winfo_screenheight()-70)}")
         win.transient(self)
         win.grab_set()
         return win
 
-    def system(self):
+    def system(self,section=0):
         if self.job:
             return
         win=self.dialog("Mój system","800x620")
@@ -360,15 +594,35 @@ class App(tk.Tk):
         book=ttk.Notebook(win)
         book.grid(row=0,column=0,sticky="nsew",padx=12,pady=12)
         panels=[]
-        for name in ("Odniesienie","Poziomy","Zakres szukania","System"):
-            frame=ttk.Frame(book,padding=12)
+        canvases=[]
+        for name in ("Obecne ustawienie","Poziomy subów","Zakres szukania","Opis systemu"):
+            holder=ttk.Frame(book)
+            holder.columnconfigure(0,weight=1)
+            holder.rowconfigure(0,weight=1)
+            canvas=tk.Canvas(holder,highlightthickness=0,background="#f3f5f7")
+            canvas.grid(row=0,column=0,sticky="nsew")
+            scrollbar=ttk.Scrollbar(holder,command=canvas.yview)
+            scrollbar.grid(row=0,column=1,sticky="ns")
+            canvas.configure(yscrollcommand=scrollbar.set)
+            frame=ttk.Frame(canvas,padding=12)
+            item=canvas.create_window((0,0),window=frame,anchor="nw")
+            frame.bind("<Configure>",lambda e,cv=canvas:cv.configure(scrollregion=cv.bbox("all")))
+            canvas.bind("<Configure>",lambda e,cv=canvas,it=item:cv.itemconfigure(it,width=e.width))
             frame.columnconfigure(1,weight=1)
-            book.add(frame,text=name)
+            book.add(holder,text=name)
             panels.append(frame)
+            canvases.append(canvas)
+        book.select(section)
+        def wheel(event):
+            direction=(-1 if event.num==4 else 1) if getattr(event,"num",None) in (4,5) else -int(event.delta/120)
+            canvases[book.index(book.select())].yview_scroll(direction,"units")
+        win.bind("<MouseWheel>",wheel)
+        win.bind("<Button-4>",wheel)
+        win.bind("<Button-5>",wheel)
         c=active_config(self.project)
         ref=panels[0]
         choices={"Nie wybrano":"",**self.choices()}
-        history=field(ref,0,"Historia",next((n for n,k in choices.items() if c and k==c["key"]),"Nie wybrano"),choices)
+        history=field(ref,0,"Zapisane ustawienia",next((n for n,k in choices.items() if c and k==c["key"]),"Nie wybrano"),choices)
         def activate():
             key=choices.get(history.get())
             if key:
@@ -384,7 +638,7 @@ class App(tk.Tk):
             variables[key]=field(ref,row,title,c["settings"][key] if c else "BW48" if key=="filter" else "",("BW48","LR48","BW24","LR24") if key=="filter" else None)
         confirmed=tk.BooleanVar(value=c["console_confirmed"] if c else False)
         ttk.Checkbutton(ref,text="Sprawdziłem wartości w konsoli; polaryzacja OFF/OFF",variable=confirmed).grid(row=9,column=0,columnspan=2,sticky="w",pady=8)
-        ttk.Label(ref,text="Zmiana parametrów tworzy nową wersję. Wpis nie jest dowodem pomiarowym.\nDo samego porównania możesz dodać tylko nazwę presetu poniżej.\nW Historii wybierzesz konfigurację odniesienia.").grid(row=10,column=0,columnspan=2,sticky="w")
+        ttk.Label(ref,text="Przepisz wartości z konsoli miniDSP. Każda zmiana parametrów tworzy nową wersję.\nWpis potwierdza ustawienia z konsoli; zgodność z pomiarem sprawdzimy osobno.\nDo samego porównania SPL wystarczy nazwa ustawienia.",wraplength=700).grid(row=10,column=0,columnspan=2,sticky="w")
         def measurement_preset():
             put_measurement_preset(self.project,label.get())
             self.autosave()
@@ -441,13 +695,13 @@ class App(tk.Tk):
                 messagebox.showerror("Ustawienia",str(exc),parent=win)
         ttk.Button(win,text="Zapisz ustawienia",command=commit).grid(row=1,column=0,sticky="e",padx=12,pady=(0,12))
 
-    def mapping(self):
+    def mapping(self,source_id=None):
         if self.job:
             return
-        source=self.selected_source()
+        source=next((s for s in self.project["sources"] if s["id"]==source_id),None) if source_id else self.selected_source()
         if not source:
             return
-        win=self.dialog("Przypisanie — "+source["name"],"1020x620")
+        win=self.dialog("Opisz pomiary — "+source["name"],"1020x650")
         win.columnconfigure(0,weight=1)
         win.rowconfigure(1,weight=1)
         top=ttk.Frame(win,padding=8)
@@ -456,40 +710,46 @@ class App(tk.Tk):
         choices={"Nieprzypisane":"",**self.choices()}
         stage=field(top,0,"Etap sesji",source["stage"],STAGES)
         preset=field(top,1,"Konfiguracja sesji",next((n for n,k in choices.items() if k==source["configuration"]),"Nieprzypisane"),choices)
-        ttk.Label(top,text="Konfiguracje dodasz w Mój system. Kanał L/R i pozycja mikrofonu to osobne informacje.").grid(row=2,column=0,columnspan=2,sticky="w",pady=4)
-        t=table(win,[("name","Nazwa źródłowa",210),("role","Rola / kanał",115),("mic","Pozycja mikrofonu",150),("preset","Preset",175),("stage","Etap",120)],7)
+        ttk.Label(top,text="Wybierz etap i ustawienie całej sesji. Niżej wybierz ślad i opisz, co grało.\nMiejsce mikrofonu, np. MLP, opisuje położenie kapsuły; kanał L/R — grającą stronę.",wraplength=750).grid(row=2,column=0,columnspan=2,sticky="w",pady=4)
+        t=table(win,[("name","Nazwa źródłowa",220),("role","Co grało",225),("mic","Miejsce mikrofonu",130),("preset","Ustawienie",190),("stage","Etap",125)],6)
         t.grid(row=1,column=0,sticky="nsew",padx=8)
         drafts=copy.deepcopy(source["traces"])
         def fill():
+            selection=t.selection()
             t.delete(*t.get_children())
             for i,r in enumerate(drafts):
-                t.insert("","end",iid=str(i),values=(r["name"],r["role"],r["microphone"],self.config_label(r["preset"]),r["stage"]))
+                t.insert("","end",iid=str(i),values=(r["name"],ROLE_LABELS.get(r["role"],r["role"]),r["microphone"],self.config_label(r["preset"]),r["stage"]))
+            if selection:
+                t.selection_set(selection)
         fill()
         edit=ttk.Frame(win,padding=8)
         edit.grid(row=2,column=0,sticky="ew")
-        role,mic,trace_preset,trace_stage=tk.StringVar(value="Nieprzypisany"),tk.StringVar(),tk.StringVar(value="Nieprzypisane"),tk.StringVar(value=source["stage"])
-        for col,var,vals,width in ((0,role,ROLES,17),(1,mic,None,18),(2,trace_preset,choices,29),(3,trace_stage,STAGES,18)):
+        role,mic,trace_preset,trace_stage=tk.StringVar(value=ROLE_LABELS["Nieprzypisany"]),tk.StringVar(),tk.StringVar(value="Nieprzypisane"),tk.StringVar(value=source["stage"])
+        for col,caption in enumerate(("Co grało w tym śladzie?","Gdzie stała kapsuła?","Które ustawienie?","Kiedy zmierzono?")):
+            ttk.Label(edit,text=caption).grid(row=0,column=col,sticky="w",padx=3)
+        for col,var,vals,width in ((0,role,ROLE_LABELS.values(),26),(1,mic,None,17),(2,trace_preset,choices,26),(3,trace_stage,STAGES,16)):
             w=ttk.Entry(edit,textvariable=var,width=width) if vals is None else ttk.Combobox(edit,textvariable=var,values=list(vals),state="readonly",width=width)
-            w.grid(row=0,column=col,padx=3)
+            w.grid(row=1,column=col,padx=3)
         def selected(event=None):
             ids=t.selection()
             if ids:
                 r=drafts[int(ids[0])]
-                role.set(r["role"] if r["role"] in ROLES else "Nieprzypisany")
+                role.set(ROLE_LABELS.get(r["role"],ROLE_LABELS["Nieprzypisany"]))
                 mic.set(r["microphone"])
                 trace_stage.set(r["stage"])
                 trace_preset.set(next((n for n,k in choices.items() if k==r["preset"]),"Nieprzypisane"))
         t.bind("<<TreeviewSelect>>",selected)
         def apply_one():
             for i in t.selection():
-                drafts[int(i)].update(role=role.get(),microphone=mic.get().strip(),preset=choices[trace_preset.get()],stage=trace_stage.get())
+                drafts[int(i)].update(role=next(k for k,v in ROLE_LABELS.items() if v==role.get()),microphone=mic.get().strip(),preset=choices[trace_preset.get()],stage=trace_stage.get())
             fill()
         def apply_all():
             for r in drafts:
                 r.update(microphone=mic.get().strip(),preset=choices[preset.get()],stage=stage.get())
             fill()
-        ttk.Button(edit,text="Zastosuj",command=apply_one).grid(row=0,column=4,padx=3)
-        ttk.Button(edit,text="Etap sesji, konfiguracja i wpisana pozycja dla wszystkich śladów",command=apply_all).grid(row=1,column=0,columnspan=4,sticky="w",pady=6)
+            selected()
+        ttk.Button(edit,text="Zastosuj do śladu",command=apply_one).grid(row=1,column=4,padx=3)
+        ttk.Button(edit,text="Etap sesji, ustawienie i wpisane miejsce dla wszystkich",command=apply_all).grid(row=2,column=0,columnspan=4,sticky="w",pady=6)
         checks=ttk.Frame(win,padding=8)
         checks.grid(row=3,column=0,sticky="ew")
         raw,same=tk.BooleanVar(value=source["raw_confirmed"]),tk.BooleanVar(value=source["session_confirmed"])
@@ -500,6 +760,7 @@ class App(tk.Tk):
         levels={"Nieustalony":"","Bazowy":"raw","Pomiar Dirac":"dirac","Odsłuch":"listening"}
         level=field(checks,3,"Poziom subów w tej sesji",next(k for k,v in levels.items() if v==source["gain_state"]),levels)
         def commit():
+            apply_one()
             source.update(traces=drafts,stage=stage.get(),configuration=choices[preset.get()],raw_confirmed=raw.get(),session_confirmed=same.get(),timing_confirmed=timing.get(),gain_state=levels[level.get()],mapping_confirmed=True)
             changed(self.project)
             self.autosave()
@@ -507,6 +768,9 @@ class App(tk.Tk):
             win.destroy()
             self.start("check")
         ttk.Button(checks,text="Potwierdź przypisanie i sprawdź",command=commit).grid(row=4,column=0,columnspan=3,sticky="e",pady=6)
+        if drafts:
+            t.selection_set("0")
+            selected()
 
     def api_dialog(self):
         if self.job:
@@ -605,6 +869,7 @@ class App(tk.Tk):
                         self.present(result)
                         self.autosave()
                     self.stage=result["message"]
+                    self.refresh_guide()
                     break
             self.status.configure(text=(self.stage[:145]+f" · {int(time.monotonic()-self.started)} s") if self.job else self.stage[:240])
         self.after(100,self.poll)
@@ -614,9 +879,18 @@ class App(tk.Tk):
         if task=="check":
             checks=result.get("checks",{})
             names={s["id"]:s["name"] for s in self.project["sources"]}
-            text="\n".join(names.get(r["source_id"],"Źródło")+": "+r["message"] for r in checks.get("sources",[]))
-            text+="\nPoziomy: "+checks.get("levels",{}).get("message","Nie sprawdzono.")
-            self.measure_summary.configure(text=text[:920])
+            self.check_table.delete(*self.check_table.get_children())
+            self.check_messages={}
+            for i,r in enumerate(checks.get("sources",[])):
+                state="Faza i suma sprawdzone" if r.get("phase") else "SPL dostępny" if r.get("spl") else "Nie można odczytać"
+                self.check_table.insert("","end",iid=str(i),values=(names.get(r["source_id"],"Źródło"),state,r["message"]))
+                self.check_messages[str(i)]=r["message"]
+            level=checks.get("levels",{})
+            msg=level.get("message","Nie sprawdzono poziomów.")
+            self.check_table.insert("","end",iid="levels",values=("Zmiana poziomu subwooferów","Sprawdzona" if level.get("status")=="VERIFIED" else "Wymaga danych / poprawy",msg))
+            self.check_messages["levels"]=msg
+            self.measure_summary.configure(text="Wyniki kontroli — zaznacz wiersz, aby przeczytać całą przyczynę. Odczyt SPL nie potwierdza jeszcze fazy ani odniesienia.")
+            self.set_check_note("")
         elif task in ("standard","custom"):
             self.design_result=result
             self.design_summary.configure(text=result["message"]+"\n"+result.get("next",""))
@@ -644,8 +918,7 @@ class App(tk.Tk):
                 self.choice.set(note["choice"] if note else "brak wyraźnej różnicy")
                 self.matched.set(note["level_matched"] if note else False)
                 self.note.set(note["note"] if note else "")
-            summaries=result.get("summaries",[])
-            self.compare_summary.configure(text="\n".join(summaries) if summaries else result["message"]+"\n"+result.get("next",""))
+            self.compare_summary.configure(text=("Pomiar: pokazano B − A, bez wyrównania poziomu. Zaznacz wiersz, aby obejrzeć wykres. Odsłuch: wyrównaj głośność i zapisz własny wybór." if result.get("status")=="ok" else result["message"]+"\n"+result.get("next","")))
             self.comparison.delete(*self.comparison.get_children())
             for i,r in enumerate(result.get("rows",[])):
                 self.comparison.insert("","end",iid=str(i),values=(r["position"],r["role"],*[self.fmt(r["delta_db"][k]) for k in ("30–60 Hz","80–110 Hz","100–220 Hz")]))
@@ -657,6 +930,10 @@ class App(tk.Tk):
         elif task=="export" and result["status"]=="ok":
             messagebox.showinfo("Ustawienia do testu",result["message"]+"\n\n"+result["export_dir"],parent=self)
             folder(result["export_dir"])
+            self.guide_dialog("trial")
+        elif task=="verify":
+            self.measure_summary.configure(text=result["message"]+"\n"+result.get("next",""))
+            self.status.configure(text=result["message"])
         else:
             self.status.configure(text=result["message"])
 
@@ -725,6 +1002,7 @@ class App(tk.Tk):
             return
         self.project["listening"].append({"a":r["config_a"],"b":r["config_b"],"stage":r["stage"],"choice":self.choice.get(),"level_matched":self.matched.get(),"note":self.note.get().strip(),"author":"użytkownik","created":utc_now(),"run_id":r["run_id"]})
         self.autosave()
+        self.refresh_guide()
         self.status.configure(text="Zapisano Twój wybór."+(" Głośność niewyrównana — ograniczona miarodajność." if not self.matched.get() else ""))
 
     def shown_result(self):

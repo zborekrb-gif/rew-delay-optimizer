@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""REWDO v20.32 single-EXE boot.
+"""REWDO v20.33 single-EXE boot.
 
 One executable does both jobs:
   - normal GUI
@@ -19,7 +19,7 @@ import traceback
 from pathlib import Path
 
 
-VERSION = "20.32"
+VERSION = "20.33"
 
 
 def is_frozen() -> bool:
