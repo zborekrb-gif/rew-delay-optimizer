@@ -265,18 +265,18 @@ będzie potrzebna kontrola. Nie wpływa to na automatyczną rekomendację.
 ## Podstawowy workflow
 
 1. Wybierz projekt `.mdat`.
-2. Jeżeli wybierasz bazowy plik RAW z wyłączonym crossoverem SHD, ustaw crossover, który chcesz zasymulować.
+2. Jeżeli wybierasz plik z pomiarami bez zwrotnicy SHD (RAW), ustaw crossover, który chcesz zasymulować.
 3. Kliknij `START: import + optymalizacja`.
 4. W tabeli odczytaj pierwszy wiersz `Główny OFF/OFF`.
 5. Wpisz pełny zestaw czterech delayów do SHD: L main, R main, L sub i R sub.
 6. Zrób pomiar kontrolny w REW.
 7. Przy zwykłym porównaniu slotów przejdź do Diraca i POST-DIRAC; PRE-DIRAC rób tylko dla podejrzanych topologii.
 
-## Pomiar bazowy RAW
+## Pomiary bez zwrotnicy DSP (RAW)
 
 Dla pliku RAW aplikacja automatycznie nakłada cyfrowo HPF na kolumny i LPF na suby.
 Uwzględnia zarówno amplitudę, jak i fazę filtra. Stały filtr analogowy REL ustawiony
-podczas pomiaru bazowego pozostaje już zawarty w danych.
+podczas pomiarów bez zwrotnicy DSP pozostaje już zawarty w danych.
 
 ## Jak czytać cztery wiersze tabeli
 

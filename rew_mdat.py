@@ -459,7 +459,7 @@ def write_mdat_scan_report(path: str | Path, out_dir: str | Path) -> Tuple[Path,
         "",
         "## Mapowanie pomiarów",
         "",
-        "| # | Rola | Nazwa w REW / MDAT | Bazowy delay |",
+        "| # | Rola | Nazwa w REW / MDAT | Opóźnienie ustawione podczas pomiaru |",
         "|---:|---|---|---:|",
     ]
     for m in measurements:
@@ -888,7 +888,7 @@ def _decode_mdat_numeric_records(
         # Oś jest metadanym konkretnego pomiaru, a nie samej liczby punktów.
         # Dwa sweepy mogą mieć tyle samo próbek, ale inny start/krok/koniec.
         # Cache po ``points`` powodował wtedy ciche przypisanie osi pierwszego
-        # pomiaru do kolejnych śladów i mógł zafałszować fazę oraz delay.
+        # pomiaru do kolejnych pomiarów i mógł zafałszować fazę oraz delay.
         axis_meta: Optional[Tuple[np.ndarray, float, float, float]] = None
         last_error: Optional[Exception] = None
         for entry in reversed(phase_entries):

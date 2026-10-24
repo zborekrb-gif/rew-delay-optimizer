@@ -107,10 +107,10 @@ def compare_post_dirac(project, *, source_id, config_a, config_b, position, sele
             trace=matches[0];index=trace.get('position')
             if (isinstance(index,bool) or not isinstance(index,int) or index in indices
                     or trace_id in ids or trace_id!=digest([source['sha256'],index])):
-                raise ValueError('Powtórzony albo niezgodny identyfikator pomiaru. Sprawdź przypisanie śladów.')
+                raise ValueError('Powtórzony albo niezgodny identyfikator pomiaru. Sprawdź przypisanie pomiarów.')
             indices.add(index);ids.add(trace_id);traces.append((cfg,role,trace))
     records={int(r.info.position):r for r in numeric_records(path)}
-    if not indices<=set(records):raise ValueError('Wybrany ślad nie występuje w pliku. Wczytaj źródło ponownie.')
+    if not indices<=set(records):raise ValueError('Wybrany pomiar nie występuje w pliku. Wczytaj źródło ponownie.')
     ordered=[records[t['position']] for _,_,t in traces]
     lo=max(float(r.freq[0]) for r in ordered);hi=min(float(r.freq[-1]) for r in ordered)
     if hi<=lo:raise ValueError('Wybrane pomiary nie mają wspólnego zakresu częstotliwości.')

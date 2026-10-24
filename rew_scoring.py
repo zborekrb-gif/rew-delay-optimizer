@@ -64,9 +64,9 @@ def candidate_final_relative_delays(
 def final_delay_warnings(l_final_ms: float, r_final_ms: float) -> List[str]:
     warnings: List[str] = []
     if l_final_ms < 0:
-        warnings.append(f"L FINAL delay wychodzi ujemny ({l_final_ms:.2f} ms). miniDSP zwykle nie przyjmie wartości < 0; podnieś bazowe opóźnienia obu kanałów albo zawęź zakres skanu.")
+        warnings.append(f"L FINAL delay wychodzi ujemny ({l_final_ms:.2f} ms). miniDSP zwykle nie przyjmie wartości < 0; zwiększ opóźnienia obu kanałów ustawione podczas pomiaru albo zawęź zakres szukania. Wpisane opóźnienia muszą odpowiadać rzeczywistym ustawieniom podczas pomiaru.")
     if r_final_ms < 0:
-        warnings.append(f"R FINAL delay wychodzi ujemny ({r_final_ms:.2f} ms). miniDSP zwykle nie przyjmie wartości < 0; podnieś bazowe opóźnienia obu kanałów albo zawęź zakres skanu.")
+        warnings.append(f"R FINAL delay wychodzi ujemny ({r_final_ms:.2f} ms). miniDSP zwykle nie przyjmie wartości < 0; zwiększ opóźnienia obu kanałów ustawione podczas pomiaru albo zawęź zakres szukania. Wpisane opóźnienia muszą odpowiadać rzeczywistym ustawieniom podczas pomiaru.")
     return warnings
 
 

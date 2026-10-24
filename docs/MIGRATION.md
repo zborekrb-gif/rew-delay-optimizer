@@ -4,7 +4,7 @@ Główna baza: 20.34-dev2, z archiwum `REWDO_20_34_DEV2_PELNE_POROWNANIE.zip`, S
 
 Historia Git zachowuje kolejne migawki źródeł 20.31, 20.32, 20.33, 20.34-dev1 i 20.34-dev2. Daty commitów są datami importu, nie deklaracją dat powstania wersji. Na GitHub migawki są dostępne w historii commitów i na gałęziach `archive/v*-source`. Nie są odbiorem wydania Windows. Lokalne tagi kopii importowej nie są tagami repozytorium GitHub.
 
-W każdej migawce zachowano bajtowo wszystkie pliki Python z głównego katalogu źródeł, w tym silniki, starsze interfejsy i narzędzia. Historyczne ustawienia i opisy systemu zapisane bezpośrednio w kodzie są publikowane za zgodą właściciela. Nie opublikowano prywatnego MDAT, profili YAML, danych wyuczonej kalibracji, wyników przebiegów ani prywatnych raportów. Oryginalne paczki pozostają zachowane osobno. Scenariusze BAT z konkretnymi historycznymi nastawami nie stanowią ogólnego sposobu uruchomienia repozytorium; główne launchery i kompletny BAT budowy są zachowane.
+W każdej archiwalnej migawce importu zachowano bajtowo wszystkie pliki Python z głównego katalogu źródeł, w tym silniki, starsze interfejsy i narzędzia. Historyczne ustawienia i opisy systemu zapisane bezpośrednio w kodzie są publikowane za zgodą właściciela. Nie opublikowano prywatnego MDAT, profili YAML, danych wyuczonej kalibracji, wyników przebiegów ani prywatnych raportów. Oryginalne paczki pozostają zachowane osobno. Scenariusze BAT z konkretnymi historycznymi nastawami nie stanowią ogólnego sposobu uruchomienia repozytorium; główne launchery i kompletny BAT budowy są zachowane.
 
 Zmiany dystrybucyjne:
 
@@ -19,3 +19,7 @@ Zmiany dystrybucyjne:
 `BUILD_IDENTITY.json` zawiera wersję migawki i sumy kontrolne zachowanych plików Python. Bieżący README i dokumenty migracji opisują docelowy import; przy przeglądaniu historycznej migawki rozstrzygająca jest jej wersja w BUILD_IDENTITY oraz kod.
 
 Licencja pozostaje do wyboru właściciela projektu. Nie dodano LICENSE ani automatycznego procesu publikacji.
+
+## Poprawki po imporcie
+
+Pole `upstream_runtime_python_sha256` w BUILD_IDENTITY opisuje źródła użyte do pierwotnego importu. Pole `runtime_python_sha256`, gdy występuje, opisuje bieżące pliki. `source_base_commit` i `source_change` wskazują podstawę i rodzaj zmiany. Poprawka `plain-polish-ui` zmienia opisy i sposób wyświetlania etapu pomiaru; zapisane identyfikatory etapów i algorytmy DSP pozostają zgodne.

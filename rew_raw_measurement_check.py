@@ -75,8 +75,8 @@ def _delay_guess_report(project: MdatImportedProject) -> Tuple[List[RawCheckItem
     if abs(main_path_delay) > 0.05:
         items.append(RawCheckItem(
             "Delaye RAW", "RYZYKO",
-            f"Nazwa pliku sugeruje bazowy delay mainów {main_path_delay:.2f} ms.",
-            "Do bazowego RAW najlepiej mierzyć delaye SHD = 0,00 ms. Jeżeli to był świadomy pomiar kontrolny, nie używaj go jako podstawowego RAW."
+            f"Nazwa pliku wskazuje opóźnienie kolumn ustawione podczas pomiaru: {main_path_delay:.2f} ms.",
+            "Do pomiarów bez zwrotnicy DSP (RAW) ustaw opóźnienia w SHD na 0,00 ms. Jeżeli to był świadomy pomiar kontrolny, nie używaj go jako podstawowego RAW."
         ))
     else:
         items.append(RawCheckItem("Delaye RAW", "OK", "Nazwa pliku nie sugeruje niezerowego delayu mainów.", "W RAW delaye SHD powinny być 0,00 ms."))
@@ -91,7 +91,7 @@ def _delay_guess_report(project: MdatImportedProject) -> Tuple[List[RawCheckItem
                 items.append(RawCheckItem(
                     "Delaye RAW", "RYZYKO",
                     f"Nazwa pomiaru `{name}` sugeruje delay suba {d:.2f} ms.",
-                    "Dla podstawowego RAW suby też powinny mieć 0,00 ms. Nie mieszaj pomiaru kontrolnego z pomiarem bazowym do symulacji."
+                    "Dla podstawowego RAW suby też powinny mieć 0,00 ms. Nie mieszaj pomiaru kontrolnego z pomiarem bez zwrotnicy DSP używanym do obliczeń."
                 ))
         elif "main" in role.lower():
             d = float(infer_main_delay_from_filename(name))
@@ -141,7 +141,7 @@ def analyze_raw_project(project: MdatImportedProject) -> Tuple[List[RawCheckItem
         items.append(RawCheckItem("RAW / crossover OFF", "OK", "Migawka API zawiera jawne potwierdzenie RAW i crossover SHD OFF."))
         items.append(RawCheckItem("Dirac / PEQ", "OK", "Potwierdzono Dirac OFF i PEQ OFF podczas wszystkich zaznaczonych sweepów."))
     elif is_raw_xover_off_project(project):
-        items.append(RawCheckItem("RAW / crossover OFF", "OK", "Projekt wygląda jak bazowy RAW z wyłączonym crossoverem SHD."))
+        items.append(RawCheckItem("RAW / crossover OFF", "OK", "Projekt wygląda jak pomiar z wyłączoną zwrotnicą SHD (RAW)."))
     else:
         detail = ", ".join(api_state_missing) if bool((project.scan or {}).get("is_rew_api_snapshot")) else ""
         items.append(RawCheckItem(
@@ -398,7 +398,7 @@ def _analyze_raw_mdat_with_status(path: str | Path, out_dir: str | Path) -> Tupl
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Kontrola pomiaru RAW — v20.31 — kontrola bazowego pomiaru RAW z MDAT albo migawki REW API")
+    p = argparse.ArgumentParser(description="Kontrola pomiaru RAW — v20.31 — kontrola pomiaru z wyłączoną zwrotnicą DSP (RAW) z MDAT albo migawki REW API")
     p.add_argument("--mdat", required=True, help="Plik REW .mdat z pomiarami RAW L/R main + L/R sub")
     p.add_argument("--out", default="raw_measurement_check", help="Folder raportu")
     return p

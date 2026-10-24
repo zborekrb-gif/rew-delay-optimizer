@@ -1,7 +1,18 @@
 """Optional private regression input; never part of the public repository."""
 import os
+import gc
 from pathlib import Path
 import pytest
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    result = yield
+    if "app" in item.fixturenames:
+        # Release destroyed Tk windows on their owning thread, before API tests
+        # start background HTTP threads that can otherwise trigger collection.
+        gc.collect()
+    return result
 
 @pytest.fixture
 def private_legacy_mdat():

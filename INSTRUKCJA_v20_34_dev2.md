@@ -8,18 +8,18 @@ Rozpakuj całą paczkę do nowego folderu i uruchom `START_REWDO.bat`. Skrypt ko
 
 1. W **Porównanie i odsłuch** wybierz etap **Po Dirac**, A jako odniesienie i B do sprawdzenia. Nazwy ustawień dodasz przyciskiem **Dodaj nazwę ustawienia**.
 2. Kliknij **Pełne porównanie…**.
-3. Wybierz jeden plik z pomiarami obu ustawień oraz jedno miejsce kapsuły. Jeżeli w projekcie jest tylko jedna możliwość, program ją uzupełni.
-4. Wskaż konkretne L, R i L+R osobno dla A i B. Przy jednym dostępnym śladzie wybór jest automatyczny. Przy kilku pomiarach trzeba wskazać właściwy; program nie wybiera ostatniego na podstawie nazwy lub kolejności.
+3. Wybierz jeden plik z pomiarami obu ustawień oraz jedno miejsce mikrofonu. Jeżeli w projekcie jest tylko jedna możliwość, program ją uzupełni.
+4. Wskaż konkretne L, R i L+R osobno dla A i B. Przy jednym dostępnym pomiarze wybór jest automatyczny. Przy kilku pomiarach trzeba wskazać właściwy; program nie wybiera ostatniego na podstawie nazwy lub kolejności.
 5. Potwierdź rzeczywiste warunki serii: ten sam tor i głośność główna, opisana zmiana A/B, wspólna metoda referencji czasu i nieruchomy mikrofon w tym miejscu. Niezaznaczenie referencji lub nieruchomego mikrofonu pozwala odczytać SPL, ale blokuje pełną ocenę fazy i czasu.
 6. Pozostaw **Dołącz czas i powtarzalność**, jeśli chcesz wspólną ocenę. Czas wymaga migawki API REW z impulsami, co najmniej trzech osobnych pomiarów A dla każdej roli L/R/L+R i co najmniej po jednym dla B. Te same powtórzenia muszą mieć w projekcie właściwy etap, konfigurację i pozycję.
 7. Uruchom **Porównaj po Dirac**. Na karcie **Co zrobić teraz** zobaczysz wynik, zalecane działanie, dostępność poszczególnych obszarów i metryki. Zaznacz obszar w tabeli, aby przeczytać cały opis.
 8. **Otwórz raport** prowadzi do podsumowania Markdown, metryk CSV, przypisań CSV i danych kontroli JSON. **Zapisz podsumowanie** zapisuje czytelny raport w wybranym miejscu.
 
-Sześć wskazanych śladów służy do porównania SPL i sumowania stereo. Analiza czasu korzysta ze wszystkich przypisanych powtórzeń A/B z tego samego pliku, etapu i miejsca, dzięki czemu może wyznaczyć rozrzut A. W raporcie oba zakresy są rozróżnione.
+Sześć wskazanych pomiarów służy do porównania SPL i sumowania stereo. Analiza czasu korzysta ze wszystkich przypisanych powtórzeń A/B z tego samego pliku, etapu i miejsca, dzięki czemu może wyznaczyć rozrzut A. W raporcie oba zakresy są rozróżnione.
 
 ## Przygotowanie danych
 
-W **Pomiary → Opisz pomiary** przypisz każdemu śladowi rzeczywistą konfigurację, etap, rolę i pozycję mikrofonu. Kolumna L/R oznacza stronę, a pozycja — miejsce kapsuły. Nazwy śladów nie muszą mieć specjalnego formatu.
+W **Pomiary → Opisz pomiary** przypisz każdemu pomiarowi rzeczywistą konfigurację, etap, rolę i pozycję mikrofonu. Kolumna L/R oznacza stronę, a pozycja — miejsce mikrofonu. Nazwy pomiarów nie muszą mieć specjalnego formatu.
 
 Pełne porównanie fazy wymaga zmierzonych L, R i L+R. Program niezależnie sprawdza, czy zespolone L+R odtwarzają zmierzoną sumę, używając zachowanej kontroli fazy w jej paśmie kontrolnym. Nie zastępuje brakującego pomiaru L+R sumą obliczoną.
 
@@ -45,6 +45,6 @@ Historyczne profile odsłuchowe 90/102 i nazwy plików nie ustalają zwycięzcy 
 
 Jeżeli dane pozwalają przejść do odsłuchu, fizycznie wyrównaj głośność A/B. Porównaj wokal i instrumenty akustyczne, podparcie średnicy, fundament i kontrolę basu, scenę oraz zmęczenie. Własny wybór zapisz w głównym polu **Odsłuch**. Program nie dopisuje go za użytkownika i nie wyprowadza naturalności czy sceny z jednego wskaźnika.
 
-Obliczenie działa w osobnym procesie. Przycisk zmienia się na **Przerwij porównanie**. Anulowany przebieg nie publikuje raportu jako ukończonego. Zamknięcie okna pozwala procesowi dokończyć pracę; wynik pozostaje w projekcie. Zmiana wybranych śladów lub przypisań unieważnia prezentowany wynik.
+Obliczenie działa w osobnym procesie. Przycisk zmienia się na **Przerwij porównanie**. Anulowany przebieg nie publikuje raportu jako ukończonego. Zamknięcie okna pozwala procesowi dokończyć pracę; wynik pozostaje w projekcie. Zmiana wybranych pomiarów lub przypisań unieważnia prezentowany wynik.
 
 Bieżąca wersja: **20.34-dev2**, identyfikator w `BUILD_IDENTITY.json`. Starsze instrukcje i metadane pozostają dokumentacją historyczną. Nie wykonano automatycznego wgrania ustawień do sprzętu ani publikacji na GitHub.

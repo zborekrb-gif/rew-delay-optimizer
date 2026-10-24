@@ -142,7 +142,7 @@ def is_raw_xover_off_project(project: MdatImportedProject | None) -> bool:
 
 def raw_simulation_description(crossover_hz: float, filter_type: str, slope_db_oct: int) -> str:
     return (
-        f"Pomiar bazowy RAW: symuluję w SHD HPF dla kolumn i LPF dla subów: "
+        f"Pomiary bez zwrotnicy DSP (RAW): symuluję w SHD HPF dla kolumn i LPF dla subów: "
         f"{float(crossover_hz):g} Hz {str(filter_type).upper()}{int(slope_db_oct)}. "
         "Stały filtr analogowy REL pozostaje uwzględniony w pomiarze RAW."
     )
@@ -166,7 +166,7 @@ def write_raw_simulation_note(
         "- HPF na kolumny główne,",
         "- LPF na oba subwoofery.",
         "",
-        "Stały filtr analogowy REL ustawiony podczas pomiaru bazowego pozostaje już zawarty w danych RAW.",
+        "Stały filtr analogowy REL ustawiony podczas pomiarów bez zwrotnicy DSP pozostaje już zawarty w danych RAW.",
         "Wynik jest symulacją do wyboru ustawień. Przed Dirac wpisz wartości do SHD i wykonaj pomiar kontrolny w REW.",
         "",
     ])
