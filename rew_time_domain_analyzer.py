@@ -26,6 +26,7 @@ from rew_api_client import (
     decode_impulse_response,
     is_rew_api_snapshot,
     read_snapshot,
+    verify_snapshot_response_integrity,
 )
 from rew_mdat import infer_mdat_measurement_role
 
@@ -309,6 +310,9 @@ def load_time_measurements(path: Path, max_time_ms: float) -> Tuple[Dict[str, An
             "Pobierz group delay i Pobierz impuls. Import MDAT pozostaje dostępny dla pozostałych trybów."
         )
     payload = read_snapshot(path)
+    valid, problems = verify_snapshot_response_integrity(payload)
+    if not valid:
+        raise ValueError("Analiza czasowa: niepotwierdzona integralność natywnych danych: " + "; ".join(problems))
     warnings: List[str] = []
 
     state = payload.get("measurementState", {})
@@ -978,6 +982,21 @@ def write_reports(
     reference_query: str,
     warnings: Sequence[str],
 ) -> None:
+    # Validate source data and session declarations before creating any report.
+    # A stored responseIntegrity=PASS is not an independent input check.
+    valid, problems = verify_snapshot_response_integrity(payload)
+    state = payload.get("measurementState", {})
+    if not isinstance(state, Mapping):
+        state = {}
+    if state.get("timingReferenceConsistent") is not True:
+        problems.append("potwierdź wspólną metodę timing reference dla porównywanych pomiarów")
+    if state.get("microphoneStationary") is not True:
+        problems.append("potwierdź nieruchomy mikrofon podczas porównywanych pomiarów")
+    references = {item.timing_reference.strip() for item in items if item.timing_reference.strip()}
+    if len(references) > 1:
+        problems.append("impulsy mają sprzeczne oznaczenia timing reference")
+    if not valid or problems:
+        raise ValueError("Nie można wydać raportu porównania czasu: " + "; ".join(problems) + ".")
     out_dir.mkdir(parents=True, exist_ok=True)
     profiles, variants, family_fp, analysis_warnings, reference_items = analyse_variants(items, reference_query)
     all_warnings = list(warnings) + list(analysis_warnings)

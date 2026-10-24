@@ -505,7 +505,7 @@ def run_task(project, out, task, args=None, emit=print):
     args = args or {}
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    emit({"type": "stage", "message": {"check":"Sprawdzanie pomiarów", "standard":"Dobór zwrotnicy i opóźnień", "custom":"Projektowanie własnej zwrotnicy", "compare":"Porównanie pomiarów", "verify":"Sprawdzanie odniesienia", "export":"Ponowna kontrola wybranego wariantu"}.get(task, task)})
+    emit({"type": "stage", "message": {"check":"Sprawdzanie pomiarów", "standard":"Dobór zwrotnicy i opóźnień", "custom":"Projektowanie własnej zwrotnicy", "compare":"Porównanie pomiarów", "time_compare":"Analiza impulsów, powtarzalności i pełnego zestawu L/R/L+R", "verify":"Sprawdzanie odniesienia", "export":"Ponowna kontrola wybranego wariantu"}.get(task, task)})
     result = {"schema": 1, "run_id": out.name, "fingerprint": fingerprint(project), "task": task, "created": utc_now(), "sources": [{"id":s["id"], "sha256":s["sha256"]} for s in project["sources"]], "candidates": []}
     try:
         if task == "import":
@@ -527,12 +527,20 @@ def run_task(project, out, task, args=None, emit=print):
             result.update(design(project, out / "technical", task, lambda msg: emit({"type":"stage", "message":msg})))
         elif task == "compare":
             result.update(compare(project, args["stage"], args["a"], args["b"]))
+        elif task == "time_compare":
+            from rew_project_time import compare_time, write_artifacts
+            result["time_request"] = {key: args.get(key) for key in ("source_id", "stage", "a", "b", "position", "confirmations")}
+            result.update(compare_time(project, source_id=args.get("source_id"), stage=args.get("stage"),
+                                       config_a=args.get("a"), config_b=args.get("b"),
+                                       position=args.get("position"), confirmations=args.get("confirmations")))
+            result["time_report_dir"] = write_artifacts(out, project, result)
         elif task == "export":
             result.update(export_candidate(project, args["result"], args["candidate_id"], out))
         else:
             raise ValueError("Nieznane zadanie.")
     except ValueError as exc:
-        result.update(status="needs_data", message=str(exc), next="Uzupełnij wskazany brak w Pomiary lub Mój system.", reasons=[str(exc)])
+        result.update(status="needs_data", message=str(exc), next=("Wróć do wyboru pomiarów i uzupełnij wskazany brak. Brak danych czasu nie unieważnia porównania SPL."
+                      if task == "time_compare" else "Uzupełnij wskazany brak w Pomiary lub Mój system."), reasons=[str(exc)])
     except Exception as exc:
         result.update(status="error", message=f"Błąd programu: {exc}", next="Zapisz szczegóły techniczne; nie używaj niekompletnego wyniku.")
         (out / "error.log").write_text(traceback.format_exc(), encoding="utf-8")

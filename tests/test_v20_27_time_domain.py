@@ -121,6 +121,7 @@ def test_end_to_end_snapshot_and_reports():
             "mode": "native_unsmoothed",
             "nativeAxisRequested": True,
             "noSmoothingRequested": True,
+            "smoothingRequested": "None",
             "ppoRequested": None,
             "impulseRequested": True,
             "groupDelayRequested": True,

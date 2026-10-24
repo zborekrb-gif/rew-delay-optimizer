@@ -102,7 +102,7 @@ class ProcessJob:
             if self.cancelled.is_set():
                 # An interrupted result, even if the engine wrote it during cancellation, is never consumable.
                 result = {"schema":1, "run_id":self.directory.name, "status":"cancelled", "message":"Przerwano na życzenie użytkownika.", "candidates":[], "next":"Możesz rozpocząć nowy przebieg."}
-                for name in ("do_proby_pomiarowej", "pending_export"):
+                for name in ("do_proby_pomiarowej", "pending_export", "pending_time_analysis", "pelna_analiza_czasu"):
                     temporary = self.directory / name
                     if temporary.is_dir() and not temporary.is_symlink():
                         shutil.rmtree(temporary)  # only this run's unpublished export

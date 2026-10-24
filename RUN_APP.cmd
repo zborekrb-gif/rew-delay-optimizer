@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions
 set "PYTHONDONTWRITEBYTECODE=1"
-set "REWDO_RUNTIME=%LOCALAPPDATA%\REWDO\runtime_20_33"
+set "REWDO_RUNTIME=%LOCALAPPDATA%\REWDO\runtime_20_34_dev1"
 if not defined LOCALAPPDATA (
     echo LOCALAPPDATA is unavailable. Cannot choose a writable runtime directory.
     exit /b 1

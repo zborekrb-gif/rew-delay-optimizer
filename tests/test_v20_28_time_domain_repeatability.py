@@ -76,6 +76,7 @@ def _snapshot(records):
             "mode": "native_unsmoothed",
             "nativeAxisRequested": True,
             "noSmoothingRequested": True,
+            "smoothingRequested": "None",
             "ppoRequested": None,
             "impulseRequested": True,
             "groupDelayRequested": True,

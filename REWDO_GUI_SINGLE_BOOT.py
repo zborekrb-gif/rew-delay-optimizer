@@ -19,7 +19,7 @@ import traceback
 from pathlib import Path
 
 
-VERSION = "20.33"
+from rew_app_metadata import APP_VERSION as VERSION
 
 
 def is_frozen() -> bool:

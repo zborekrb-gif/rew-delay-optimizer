@@ -15,7 +15,7 @@ from rew_project import (STAGES, STEPS, ROLES, active_config, changed, fingerpri
 from rew_process import ProcessJob
 from rew_guidance import ROLE_LABELS, plan, next_step, help_text, current_run
 
-APP_VERSION = "20.33"
+from rew_app_metadata import APP_VERSION
 
 
 def __getattr__(name):
@@ -73,12 +73,13 @@ def field(parent, row, label, value="", choices=None, width=28):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("REWDO 20.33 — od pomiaru do odsłuchu")
+        self.title(f"REWDO {APP_VERSION} — od pomiaru do odsłuchu")
         self.ui_scale=max(1.0,float(self.tk.call("tk","scaling"))/(96/72))
         self.geometry(f"{min(int(1120*self.ui_scale),self.winfo_screenwidth()-60)}x{min(int(730*self.ui_scale),self.winfo_screenheight()-90)}")
         self.minsize(min(int(840*self.ui_scale),self.winfo_screenwidth()-60),min(int(560*self.ui_scale),self.winfo_screenheight()-90))
         self.project, self.path = new_project(), None
         self.job, self.latest, self.design_result, self.compare_result = None, None, None, None
+        self.time_result, self.time_window = None, None
         self.log, self.stage, self.api = [], "Projekt gotowy. Zacznij od zalecanego kroku u góry.", None
         try:
             prefs = user_dir()/"preferences.json"
@@ -263,6 +264,7 @@ class App(tk.Tk):
         actions.grid(row=2,column=0,sticky="ew",pady=6)
         self.button(actions,"Porównaj A i B",self.compare).pack(side="left")
         self.button(actions,"Dodaj nazwę ustawienia",self.add_preset).pack(side="left",padx=6)
+        self.button(actions,"Czas i powtarzalność…",self.time_dialog).pack(side="left",padx=6)
         ttk.Button(actions,text="Jak oceniać odsłuch?",command=lambda:self.guide_dialog("compare")).pack(side="left")
         self.compare_summary=ttk.Label(p,text="Możesz zacząć od gotowych pomiarów; RAW i referencja do projektowania nie są wymagane.",wraplength=950)
         self.compare_summary.grid(row=3,column=0,sticky="ew",pady=(0,6))
@@ -527,6 +529,9 @@ class App(tk.Tk):
         self.candidates.insert("","end",iid="reference",values=(c["label"] if c else "Odniesienie","0 / 0","0","Wpis z konsoli"))
         self.export_button.pack_forget()
         self.design_result,self.compare_result=None,None
+        self.time_result=None
+        if self.time_window and self.time_window.winfo_exists():
+            self.time_window.close()
         self.comparison.delete(*self.comparison.get_children())
         self.design_summary.configure(text="Wyniki zależą od aktualnej wersji projektu. Potwierdź dane i uruchom dobór.")
         self.candidate_note.configure(text="")
@@ -840,6 +845,8 @@ class App(tk.Tk):
                 elif event["type"]=="done":
                     result=event["result"] or {"status":"error","message":"Proces nie zwrócił wyniku.","candidates":[]}
                     result.setdefault("task",self.job.request["task"])
+                    if result["task"]=="time_compare":
+                        result.setdefault("time_request",copy.deepcopy(self.job.request.get("args",{})))
                     result["directory"]=str(self.job.directory)
                     self.job=None
                     self.set_busy(False)
@@ -927,6 +934,11 @@ class App(tk.Tk):
                 self.compare_curve()
             else:
                 self.plot(self.compare_plot,[],"")
+        elif task=="time_compare":
+            self.time_result=result
+            if self.time_window and self.time_window.winfo_exists():
+                self.time_window.present(result)
+            self.status.configure(text=result["message"])
         elif task=="export" and result["status"]=="ok":
             messagebox.showinfo("Ustawienia do testu",result["message"]+"\n\n"+result["export_dir"],parent=self)
             folder(result["export_dir"])
@@ -962,9 +974,25 @@ class App(tk.Tk):
 
     def invalidate_comparison(self,event=None):
         self.compare_result=None
+        self.time_result=None
         self.comparison.delete(*self.comparison.get_children())
         self.plot(self.compare_plot,[],"")
         self.compare_summary.configure(text="Zmieniono wybór presetów lub etap. Uruchom porównanie przed zapisaniem odsłuchu.")
+
+    def time_dialog(self):
+        if self.job:
+            return
+        choices=self.choices()
+        a,b=choices.get(self.a_var.get()),choices.get(self.b_var.get())
+        if not a or not b or a==b:
+            messagebox.showinfo("Czas i powtarzalność","Wybierz dwa różne ustawienia A i B nad tabelą. A będzie odniesieniem. Nazwy dodasz przyciskiem „Dodaj nazwę ustawienia”, a ślady przypiszesz przez Pomiary → Opisz pomiary.",parent=self)
+            return
+        from rew_time_gui import TimeAnalysisWindow
+        if self.time_window and self.time_window.winfo_exists():
+            self.time_window.lift()
+            return
+        self.project["ui"].update(compare_stage=self.stage_var.get(),compare_a=a,compare_b=b)
+        self.time_window=TimeAnalysisWindow(self,a,b,self.stage_var.get())
 
     def compare_curve(self,event=None):
         ids=self.comparison.selection()
